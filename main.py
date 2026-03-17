@@ -208,6 +208,7 @@ def artwork_trigger():
     assigned_to  = data.get("assigned_to", "")
 
     notify_channel = get_notify_channel(assigned_to)
+    print(f"DEBUG email received: repr={repr(client_email)} len={len(client_email)}")
 
     if not client_email:
         post_to_lark(
