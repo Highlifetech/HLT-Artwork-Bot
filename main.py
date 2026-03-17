@@ -83,13 +83,14 @@ def post_to_lark(channel_id: str, message: str):
 
 def update_record(table_id: str, record_id: str, fields: dict):
     token = get_lark_token()
-    requests.put(
+    res = requests.put(
         f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
         f"{os.environ['LARK_BASE_APP_TOKEN']}/tables/"
         f"{table_id}/records/{record_id}",
         headers={"Authorization": f"Bearer {token}"},
         json={"fields": fields},
     )
+    print(f"DEBUG update_record response: {res.status_code} {res.text}")
 
 
 def post_comment(table_id: str, record_id: str, text: str):
@@ -124,17 +125,15 @@ def post_comment(table_id: str, record_id: str, text: str):
 
 def get_lark_file_attachments(art_files_raw):
     """
-    art_files_raw is whatever Lark sends for an attachment field.
-    It may be a list of dicts with file_token, name, type etc.
-    Returns a list of dicts: {filename, content (base64 str), type}
+    Downloads art files from Lark and returns them as base64 attachments.
+    art_files_raw is the value of the attachment field from Lark — a list of file objects.
     """
     attachments = []
 
-    # Lark attachment fields come as a list of file objects
     if not art_files_raw:
+        print("DEBUG art_files_raw is empty or None")
         return attachments
 
-    # If it's a string, try to parse as JSON
     if isinstance(art_files_raw, str):
         try:
             art_files_raw = json.loads(art_files_raw)
@@ -149,6 +148,7 @@ def get_lark_file_attachments(art_files_raw):
 
     for f in art_files_raw:
         if not isinstance(f, dict):
+            print(f"DEBUG skipping non-dict art file entry: {repr(f)}")
             continue
 
         file_token = f.get("file_token") or f.get("token")
@@ -156,10 +156,9 @@ def get_lark_file_attachments(art_files_raw):
         file_type  = f.get("type", "application/octet-stream")
 
         if not file_token:
-            print(f"DEBUG no file_token in: {f}")
+            print(f"DEBUG no file_token found in: {f}")
             continue
 
-        # Download the file from Lark
         try:
             res = requests.get(
                 f"https://open.larksuite.com/open-apis/drive/v1/medias/{file_token}/download",
@@ -194,6 +193,12 @@ def send_artwork_email(to_email, order_number, approval_url,
         if is_followup else ""
     )
 
+    attachment_note = (
+        "<p>Please find your artwork file attached to this email.</p>"
+        if attachments else
+        "<p>Please use the buttons below to approve or request changes.</p>"
+    )
+
     html = f"""
     <html>
     <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
@@ -201,7 +206,8 @@ def send_artwork_email(to_email, order_number, approval_url,
       <p>Hello,</p>
       {reminder}
       <p>Your artwork for order <strong>{order_number}</strong>
-         is ready for your approval. Please find the artwork file attached.</p>
+         is ready for your approval.</p>
+      {attachment_note}
       <p>Once reviewed please select:</p>
       <div style="text-align:center;margin:30px 0;">
         <a href="{approval_url}?decision=approved"
@@ -235,12 +241,11 @@ def send_artwork_email(to_email, order_number, approval_url,
         "html":    html,
     }
 
-    # Attach files if present
     if attachments:
         payload["attachments"] = [
             {
                 "filename": a["filename"],
-                "content":  a["content"],  # base64 string
+                "content":  a["content"],
             }
             for a in attachments
         ]
@@ -266,19 +271,21 @@ def send_artwork_email(to_email, order_number, approval_url,
 
 @app.route("/artwork-trigger", methods=["POST"])
 def artwork_trigger():
-    data         = request.json or {}
-    record_id    = data.get("record_id", "")
-    table_id     = data.get("table_id", "")
-    order_number = data.get("order_number", "")
-    client       = data.get("client", "")
-    client_email = "".join(data.get("client_email", "").split())
+    data          = request.json or {}
+    record_id     = data.get("record_id", "")
+    table_id      = data.get("table_id", "")
+    order_number  = data.get("order_number", "")
+    client        = data.get("client", "")
+    client_email  = "".join(data.get("client_email", "").split())
     art_files_raw = data.get("art_files")
-    in_hand_date = data.get("in_hand_date", "")
-    assigned_to  = data.get("assigned_to", "")
+    in_hand_date  = data.get("in_hand_date", "")
+    assigned_to   = data.get("assigned_to", "")
+    product_type  = data.get("product_type", "")
 
     notify_channel = get_notify_channel(assigned_to)
-    print(f"DEBUG email received: repr={repr(client_email)} len={len(client_email)}")
+    print(f"DEBUG email: {repr(client_email)}")
     print(f"DEBUG art_files raw: {repr(art_files_raw)}")
+    print(f"DEBUG record_id: {repr(record_id)} table_id: {repr(table_id)}")
 
     if not client_email:
         post_to_lark(
@@ -292,12 +299,10 @@ def artwork_trigger():
         table_ids = get_all_table_ids()
         table_id  = table_ids[0] if table_ids else ""
 
-    # Download art files from Lark
     attachments = get_lark_file_attachments(art_files_raw)
-    if not attachments:
-        print("DEBUG no attachments retrieved — sending email without attachment")
+    print(f"DEBUG attachments count: {len(attachments)}")
 
-    token        = str(uuid.uuid4())
+    token = str(uuid.uuid4())
     approval_store[token] = {
         "record_id":      record_id,
         "table_id":       table_id,
@@ -307,6 +312,7 @@ def artwork_trigger():
         "art_files_raw":  art_files_raw,
         "in_hand_date":   in_hand_date,
         "assigned_to":    assigned_to,
+        "product_type":   product_type,
         "notify_channel": notify_channel,
         "sent_at":        datetime.now().isoformat(),
         "followup_sent":  False,
@@ -324,7 +330,7 @@ def artwork_trigger():
 
     post_to_lark(
         notify_channel,
-        f"Artwork sent to {client} for {order_number}\n"
+        f"Artwork sent to {order_number} | {client} | {product_type}\n"
         f"In-Hand Date: {in_hand_date}\n"
         f"Awaiting client approval...",
     )
@@ -395,9 +401,9 @@ def approve(token):
             <html>
             <body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
               <h1 style="color:#22c55e;">Approved!</h1>
-              <p>Thank you - we will begin production now.</p>
-              <p style="color:#666;">You will receive a shipping notification
-                 when your order is on its way.</p>
+              <p>Thank you &mdash; we will begin production now.</p>
+              <p>If you have any questions, please contact us with your order number at
+                 <a href="mailto:orders@highlifetech.co">orders@highlifetech.co</a>.</p>
             </body>
             </html>
             """, 200
@@ -422,6 +428,8 @@ def approve(token):
               <h1>Got it!</h1>
               <p>We have received your feedback and will send
                  a revised proof shortly.</p>
+              <p>If you have any questions, please contact us with your order number at
+                 <a href="mailto:orders@highlifetech.co">orders@highlifetech.co</a>.</p>
             </body>
             </html>
             """, 200
@@ -444,7 +452,6 @@ def check_pending_approvals():
                 base_url     = os.environ.get("BOT_URL", "https://your-bot.railway.app")
                 approval_url = f"{base_url}/approve/{token}"
                 try:
-                    # Re-download files for follow-up
                     attachments = get_lark_file_attachments(project.get("art_files_raw"))
                     send_artwork_email(
                         project["client_email"],
