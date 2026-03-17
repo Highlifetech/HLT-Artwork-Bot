@@ -18,7 +18,7 @@ _table_id_cache = []
 _table_cache_time = 0
 TABLE_CACHE_TTL = 300
 
-# Lark Base deep link base
+# Lark Base deep link
 LARK_BASE_URL = "https://ojpglhhzxlvc.jp.larksuite.com/base/VcAlbwImaab1KlsFLBVjunTNp1c"
 
 
@@ -185,6 +185,30 @@ def get_lark_file_attachments(art_files_raw):
 
 
 # ══════════════════════════════════════════════════════
+# EMAIL FOOTER
+# ══════════════════════════════════════════════════════
+
+EMAIL_FOOTER = """
+      <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
+      <p style="color:#999;font-size:12px;">
+        If you have any questions, please contact us with your order number at
+        <a href="mailto:orders@highlifetech.co" style="color:#999;">orders@highlifetech.co</a>.<br>
+        For any new inquiries, contact your sales rep or email us at
+        <a href="mailto:sales@highlifetech.co" style="color:#999;">sales@highlifetech.co</a>.
+      </p>
+"""
+
+PAGE_FOOTER = """
+      <p style="color:#666;font-size:14px;margin-top:30px;">
+        If you have any questions, please contact us with your order number at
+        <a href="mailto:orders@highlifetech.co">orders@highlifetech.co</a>.<br>
+        For any new inquiries, contact your sales rep or email us at
+        <a href="mailto:sales@highlifetech.co">sales@highlifetech.co</a>.
+      </p>
+"""
+
+
+# ══════════════════════════════════════════════════════
 # EMAIL VIA RESEND
 # ══════════════════════════════════════════════════════
 
@@ -229,10 +253,7 @@ def send_artwork_email(to_email, order_number, approval_url,
       <p style="color:#666;font-size:14px;">
         Please respond within 24 hours to keep your project on schedule.
       </p>
-      <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
-      <p style="color:#999;font-size:12px;">
-        High Life Tech - orders@highlifetech.co
-      </p>
+      {EMAIL_FOOTER}
     </body>
     </html>
     """
@@ -398,19 +419,18 @@ def approve(token):
             )
             post_to_lark(
                 notify_channel,
-                f"Approved - {project['client']} approved {project['order_number']}\n"
+                f"Approved - {project['order_number']}\n"
                 f"Status -> ARTWORK CONFIRMED\n"
-                f"Ready to move to Part Confirmed.\n"
+                f"This order will now begin production.\n"
                 f"{link}",
             )
             del approval_store[token]
-            return """
+            return f"""
             <html>
             <body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
               <h1 style="color:#22c55e;">Approved!</h1>
               <p>Thank you &mdash; we will begin production now.</p>
-              <p>If you have any questions, please contact us with your order number at
-                 <a href="mailto:orders@highlifetech.co">orders@highlifetech.co</a>.</p>
+              {PAGE_FOOTER}
             </body>
             </html>
             """, 200
@@ -430,14 +450,13 @@ def approve(token):
                 f"{link}",
             )
             del approval_store[token]
-            return """
+            return f"""
             <html>
             <body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
               <h1>Got it!</h1>
               <p>We have received your feedback and will send
                  a revised proof shortly.</p>
-              <p>If you have any questions, please contact us with your order number at
-                 <a href="mailto:orders@highlifetech.co">orders@highlifetech.co</a>.</p>
+              {PAGE_FOOTER}
             </body>
             </html>
             """, 200
