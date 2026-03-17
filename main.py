@@ -18,6 +18,9 @@ _table_id_cache = []
 _table_cache_time = 0
 TABLE_CACHE_TTL = 300
 
+# Lark Base deep link base
+LARK_BASE_URL = "https://ojpglhhzxlvc.jp.larksuite.com/base/VcAlbwImaab1KlsFLBVjunTNp1c"
+
 
 # ══════════════════════════════════════════════════════
 # CHANNEL ROUTING
@@ -30,6 +33,10 @@ def get_notify_channel(assigned_to: str) -> str:
     if "lucy" in assigned:
         return os.environ.get("LUCY_CHANNEL_ID", os.environ["BRENDAN_CHANNEL_ID"])
     return os.environ["BRENDAN_CHANNEL_ID"]
+
+
+def record_link(table_id: str, record_id: str) -> str:
+    return f"{LARK_BASE_URL}?table={table_id}&record={record_id}"
 
 
 # ══════════════════════════════════════════════════════
@@ -124,10 +131,6 @@ def post_comment(table_id: str, record_id: str, text: str):
 # ══════════════════════════════════════════════════════
 
 def get_lark_file_attachments(art_files_raw):
-    """
-    Downloads art files from Lark and returns them as base64 attachments.
-    art_files_raw is the value of the attachment field from Lark — a list of file objects.
-    """
     attachments = []
 
     if not art_files_raw:
@@ -320,6 +323,7 @@ def artwork_trigger():
 
     base_url     = os.environ.get("BOT_URL", "https://your-bot.railway.app")
     approval_url = f"{base_url}/approve/{token}"
+    link         = record_link(table_id, record_id)
 
     send_artwork_email(client_email, order_number, approval_url, attachments)
 
@@ -332,7 +336,8 @@ def artwork_trigger():
         notify_channel,
         f"Artwork sent to {order_number} | {client} | {product_type}\n"
         f"In-Hand Date: {in_hand_date}\n"
-        f"Awaiting client approval...",
+        f"Awaiting client approval...\n"
+        f"{link}",
     )
 
     return jsonify({"code": 0})
@@ -383,6 +388,7 @@ def approve(token):
         now_str        = datetime.now().strftime("%b %d %Y %I:%M %p")
         tid            = project["table_id"]
         rid            = project["record_id"]
+        link           = record_link(tid, rid)
 
         if final_decision == "approved":
             update_record(tid, rid, {"Status": "ARTWORK CONFIRMED"})
@@ -392,9 +398,10 @@ def approve(token):
             )
             post_to_lark(
                 notify_channel,
-                f"{project['client']} approved {project['order_number']}\n"
+                f"Approved - {project['client']} approved {project['order_number']}\n"
                 f"Status -> ARTWORK CONFIRMED\n"
-                f"Ready to move to Part Confirmed.",
+                f"Ready to move to Part Confirmed.\n"
+                f"{link}",
             )
             del approval_store[token]
             return """
@@ -419,7 +426,8 @@ def approve(token):
                 f"{project['client']} requested changes on "
                 f"{project['order_number']}\n"
                 f"Revision notes: {notes}\n"
-                f"Status -> WAITING ART",
+                f"Status -> WAITING ART\n"
+                f"{link}",
             )
             del approval_store[token]
             return """
@@ -467,7 +475,8 @@ def check_pending_approvals():
                     post_to_lark(
                         project["notify_channel"],
                         f"Follow-up sent to {project['client']} - "
-                        f"{project['order_number']} still awaiting approval",
+                        f"{project['order_number']} still awaiting approval\n"
+                        f"{record_link(project['table_id'], project['record_id'])}",
                     )
                     approval_store[token]["followup_sent"] = True
                     approval_store[token]["sent_at"] = now.isoformat()
