@@ -1,11 +1,8 @@
 import os
 import json
 import uuid
-import smtplib
 import requests
 from flask import Flask, request, jsonify
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import threading
 import time
@@ -18,34 +15,19 @@ approval_store = {}
 # Table ID cache
 _table_id_cache = []
 _table_cache_time = 0
-TABLE_CACHE_TTL = 300  # 5 minutes
+TABLE_CACHE_TTL = 300
 
 
 # ══════════════════════════════════════════════════════
 # CHANNEL ROUTING
-# Routes notifications to the right person based on
-# who the card is assigned to
 # ══════════════════════════════════════════════════════
 
 def get_notify_channel(assigned_to: str) -> str:
-    """
-    Returns the correct Lark channel ID based on who
-    the project is assigned to.
-
-    Hannah projects -> Hannah's channel
-    Lucy projects   -> Lucy's channel
-    Everything else -> Brendan's channel
-    """
     assigned = (assigned_to or "").strip().lower()
-
     if "hannah" in assigned:
-        return os.environ.get("HANNAH_CHANNEL_ID",
-                              os.environ["BRENDAN_CHANNEL_ID"])
-
+        return os.environ.get("HANNAH_CHANNEL_ID", os.environ["BRENDAN_CHANNEL_ID"])
     if "lucy" in assigned:
-        return os.environ.get("LUCY_CHANNEL_ID",
-                              os.environ["BRENDAN_CHANNEL_ID"])
-
+        return os.environ.get("LUCY_CHANNEL_ID", os.environ["BRENDAN_CHANNEL_ID"])
     return os.environ["BRENDAN_CHANNEL_ID"]
 
 
@@ -65,13 +47,10 @@ def get_lark_token():
 
 
 def get_all_table_ids():
-    """Auto-discovers every table in the base. Cached for 5 mins."""
     global _table_id_cache, _table_cache_time
     now = time.time()
-
     if _table_id_cache and (now - _table_cache_time) < TABLE_CACHE_TTL:
         return _table_id_cache
-
     token = get_lark_token()
     res = requests.get(
         f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
@@ -81,14 +60,9 @@ def get_all_table_ids():
     )
     data = res.json()
     if data.get("code") != 0:
-        print(f"Failed to fetch tables: {data}")
         return _table_id_cache
-
-    _table_id_cache = [
-        t["table_id"] for t in data.get("data", {}).get("items", [])
-    ]
+    _table_id_cache = [t["table_id"] for t in data.get("data", {}).get("items", [])]
     _table_cache_time = now
-    print(f"Discovered {len(_table_id_cache)} tables in base")
     return _table_id_cache
 
 
@@ -144,27 +118,20 @@ def post_comment(table_id: str, record_id: str, text: str):
 
 
 # ══════════════════════════════════════════════════════
-# EMAIL
+# EMAIL VIA RESEND
 # ══════════════════════════════════════════════════════
 
 def send_artwork_email(to_email, client, order_number,
                        art_file_url, approval_url, is_followup=False):
-    msg = MIMEMultipart("alternative")
     prefix = "Follow-up: " if is_followup else ""
-    msg["Subject"] = f"{prefix}Artwork Approval - {order_number}"
-    msg["From"] = os.environ["EMAIL_ADDRESS"]
-    msg["To"] = to_email
-
     reminder = (
-        "<p><strong>Friendly reminder</strong> - "
-        "we have not heard back yet.</p>"
+        "<p><strong>Friendly reminder</strong> - we have not heard back yet.</p>"
         if is_followup else ""
     )
 
     html = f"""
     <html>
-    <body style="font-family:Arial,sans-serif;max-width:600px;
-                 margin:0 auto;padding:20px;">
+    <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
       <h2 style="color:#000;">Your artwork is ready for review</h2>
       <p>Hi {client},</p>
       {reminder}
@@ -174,8 +141,7 @@ def send_artwork_email(to_email, client, order_number,
         <a href="{art_file_url}"
            style="background:#000;color:#fff;padding:14px 28px;
                   text-decoration:none;border-radius:4px;
-                  font-weight:bold;display:inline-block;
-                  margin-bottom:20px;">
+                  font-weight:bold;display:inline-block;margin-bottom:20px;">
           View Artwork
         </a>
       </div>
@@ -184,8 +150,7 @@ def send_artwork_email(to_email, client, order_number,
         <a href="{approval_url}?decision=approved"
            style="background:#22c55e;color:#fff;padding:14px 32px;
                   text-decoration:none;border-radius:4px;
-                  font-weight:bold;display:inline-block;
-                  margin-right:12px;">
+                  font-weight:bold;display:inline-block;margin-right:12px;">
           Approve
         </a>
         <a href="{approval_url}?decision=changes"
@@ -196,11 +161,9 @@ def send_artwork_email(to_email, client, order_number,
         </a>
       </div>
       <p style="color:#666;font-size:14px;">
-        Please respond within 24 hours to keep your
-        project on schedule.
+        Please respond within 24 hours to keep your project on schedule.
       </p>
-      <hr style="border:none;border-top:1px solid #eee;
-                 margin:30px 0;">
+      <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
       <p style="color:#999;font-size:12px;">
         High Life Tech - orders@highlifetech.co
       </p>
@@ -208,20 +171,28 @@ def send_artwork_email(to_email, client, order_number,
     </html>
     """
 
-    msg.attach(MIMEText(html, "html"))
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(
-            os.environ["EMAIL_ADDRESS"],
-            os.environ["EMAIL_APP_PASSWORD"]
-        )
-        server.sendmail(
-            os.environ["EMAIL_ADDRESS"], to_email, msg.as_string()
-        )
+    response = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "from": f"High Life Tech <{os.environ['EMAIL_ADDRESS']}>",
+            "to": [to_email],
+            "subject": f"{prefix}Artwork Approval - {order_number}",
+            "html": html,
+        },
+    )
+
+    if response.status_code not in (200, 201):
+        raise Exception(f"Resend error {response.status_code}: {response.text}")
+
+    return response.json()
 
 
 # ══════════════════════════════════════════════════════
 # ARTWORK TRIGGER
-# Called by Lark automation when button is clicked
 # ══════════════════════════════════════════════════════
 
 @app.route("/artwork-trigger", methods=["POST"])
@@ -234,21 +205,18 @@ def artwork_trigger():
     client_email = data.get("client_email", "")
     art_file_url = data.get("art_files", "")
     in_hand_date = data.get("in_hand_date", "")
-    assigned_to  = data.get("assigned_to", "")  # Hannah, Lucy, etc.
+    assigned_to  = data.get("assigned_to", "")
 
-    # Determine which channel to notify
     notify_channel = get_notify_channel(assigned_to)
 
-    # No email on record — warn the right person
     if not client_email:
         post_to_lark(
             notify_channel,
-            f"Cannot send artwork for {order_number} - {client}.\n"
+            f"Cannot send artwork for {order_number} - {client}. "
             f"No client email on the card. Please add it and try again.",
         )
         return jsonify({"code": 0})
 
-    # If table_id not sent by automation, auto-discover
     if not table_id:
         table_ids = get_all_table_ids()
         table_id  = table_ids[0] if table_ids else ""
@@ -271,14 +239,11 @@ def artwork_trigger():
     base_url     = os.environ.get("BOT_URL", "https://your-bot.railway.app")
     approval_url = f"{base_url}/approve/{token}"
 
-    send_artwork_email(
-        client_email, client, order_number, art_file_url, approval_url
-    )
+    send_artwork_email(client_email, client, order_number, art_file_url, approval_url)
 
     post_comment(
         table_id, record_id,
-        f"Artwork sent to client - "
-        f"{datetime.now().strftime('%b %d %Y %I:%M %p')}"
+        f"Artwork sent to client - {datetime.now().strftime('%b %d %Y %I:%M %p')}"
     )
 
     post_to_lark(
@@ -293,7 +258,6 @@ def artwork_trigger():
 
 # ══════════════════════════════════════════════════════
 # APPROVAL PAGE
-# What client sees when they click the email link
 # ══════════════════════════════════════════════════════
 
 @app.route("/approve/<token>", methods=["GET", "POST"])
@@ -305,7 +269,6 @@ def approve(token):
     decision       = request.args.get("decision", "")
     notify_channel = project["notify_channel"]
 
-    # Show revision form
     if decision == "changes" and request.method == "GET":
         return f"""
         <html>
@@ -319,8 +282,7 @@ def approve(token):
             <textarea name="notes" rows="6"
               style="width:100%;padding:12px;border:1px solid #ddd;
                      border-radius:4px;font-size:16px;"
-              placeholder="Describe the changes you need...">
-            </textarea>
+              placeholder="Describe the changes you need..."></textarea>
             <br><br>
             <button type="submit"
               style="background:#ef4444;color:#fff;padding:12px 24px;
@@ -333,7 +295,6 @@ def approve(token):
         </html>
         """, 200
 
-    # Process decision
     if decision == "approved" or request.method == "POST":
         notes          = request.form.get("notes", "")
         final_decision = request.form.get("decision", decision)
@@ -343,8 +304,7 @@ def approve(token):
 
         if final_decision == "approved":
             update_record(tid, rid, {"Status": "ARTWORK CONFIRMED"})
-            post_comment(
-                tid, rid,
+            post_comment(tid, rid,
                 f"{project['client']} approved artwork - {now_str}. "
                 f"Production can begin."
             )
@@ -357,20 +317,18 @@ def approve(token):
             del approval_store[token]
             return """
             <html>
-            <body style="font-family:Arial,sans-serif;text-align:center;
-                         padding:80px 20px;">
+            <body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
               <h1 style="color:#22c55e;">Approved!</h1>
               <p>Thank you - we will begin production now.</p>
-              <p style="color:#666;">You will receive a shipping
-                 notification when your order is on its way.</p>
+              <p style="color:#666;">You will receive a shipping notification
+                 when your order is on its way.</p>
             </body>
             </html>
             """, 200
 
         else:
             update_record(tid, rid, {"Status": "WAITING ART"})
-            post_comment(
-                tid, rid,
+            post_comment(tid, rid,
                 f"{project['client']} requested changes - {now_str}. "
                 f"Revision notes: {notes}"
             )
@@ -384,8 +342,7 @@ def approve(token):
             del approval_store[token]
             return """
             <html>
-            <body style="font-family:Arial,sans-serif;text-align:center;
-                         padding:80px 20px;">
+            <body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
               <h1>Got it!</h1>
               <p>We have received your feedback and will send
                  a revised proof shortly.</p>
@@ -398,7 +355,6 @@ def approve(token):
 
 # ══════════════════════════════════════════════════════
 # 48HR FOLLOW-UP
-# Background thread — checks every hour
 # ══════════════════════════════════════════════════════
 
 def check_pending_approvals():
@@ -409,9 +365,7 @@ def check_pending_approvals():
             sent_at       = datetime.fromisoformat(project["sent_at"])
             hours_waiting = (now - sent_at).total_seconds() / 3600
             if hours_waiting >= 48 and not project["followup_sent"]:
-                base_url     = os.environ.get(
-                    "BOT_URL", "https://your-bot.railway.app"
-                )
+                base_url     = os.environ.get("BOT_URL", "https://your-bot.railway.app")
                 approval_url = f"{base_url}/approve/{token}"
                 try:
                     send_artwork_email(
@@ -423,8 +377,7 @@ def check_pending_approvals():
                         is_followup=True,
                     )
                     post_comment(
-                        project["table_id"],
-                        project["record_id"],
+                        project["table_id"], project["record_id"],
                         "Follow-up email sent - no client response after 48hrs"
                     )
                     post_to_lark(
