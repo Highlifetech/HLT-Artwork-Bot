@@ -202,7 +202,7 @@ def artwork_trigger():
     table_id     = data.get("table_id", "")
     order_number = data.get("order_number", "")
     client       = data.get("client", "")
-    client_email = data.get("client_email", "").strip().replace("\n", "").replace("\r", "").replace(" ", "")
+    client_email = "".join(data.get("client_email", "").split())
     art_file_url = data.get("art_files", "")
     in_hand_date = data.get("in_hand_date", "")
     assigned_to  = data.get("assigned_to", "")
