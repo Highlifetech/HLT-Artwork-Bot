@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import base64
 import requests
 from flask import Flask, request, jsonify
 from datetime import datetime
@@ -118,12 +119,76 @@ def post_comment(table_id: str, record_id: str, text: str):
 
 
 # ══════════════════════════════════════════════════════
+# LARK FILE DOWNLOAD
+# ══════════════════════════════════════════════════════
+
+def get_lark_file_attachments(art_files_raw):
+    """
+    art_files_raw is whatever Lark sends for an attachment field.
+    It may be a list of dicts with file_token, name, type etc.
+    Returns a list of dicts: {filename, content (base64 str), type}
+    """
+    attachments = []
+
+    # Lark attachment fields come as a list of file objects
+    if not art_files_raw:
+        return attachments
+
+    # If it's a string, try to parse as JSON
+    if isinstance(art_files_raw, str):
+        try:
+            art_files_raw = json.loads(art_files_raw)
+        except Exception:
+            print(f"DEBUG art_files could not be parsed: {repr(art_files_raw)}")
+            return attachments
+
+    if not isinstance(art_files_raw, list):
+        art_files_raw = [art_files_raw]
+
+    token = get_lark_token()
+
+    for f in art_files_raw:
+        if not isinstance(f, dict):
+            continue
+
+        file_token = f.get("file_token") or f.get("token")
+        file_name  = f.get("name", "artwork")
+        file_type  = f.get("type", "application/octet-stream")
+
+        if not file_token:
+            print(f"DEBUG no file_token in: {f}")
+            continue
+
+        # Download the file from Lark
+        try:
+            res = requests.get(
+                f"https://open.larksuite.com/open-apis/drive/v1/medias/{file_token}/download",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=30,
+            )
+            if res.status_code == 200:
+                encoded = base64.b64encode(res.content).decode("utf-8")
+                attachments.append({
+                    "filename": file_name,
+                    "content":  encoded,
+                    "type":     file_type,
+                })
+                print(f"DEBUG downloaded {file_name} ({len(res.content)} bytes)")
+            else:
+                print(f"DEBUG file download failed {res.status_code}: {res.text}")
+        except Exception as e:
+            print(f"DEBUG file download exception: {e}")
+
+    return attachments
+
+
+# ══════════════════════════════════════════════════════
 # EMAIL VIA RESEND
 # ══════════════════════════════════════════════════════
 
-def send_artwork_email(to_email, client, order_number,
-                       art_file_url, approval_url, is_followup=False):
-    prefix = "Follow-up: " if is_followup else ""
+def send_artwork_email(to_email, order_number, approval_url,
+                       attachments=None, is_followup=False):
+    prefix   = "Follow-up: " if is_followup else ""
     reminder = (
         "<p><strong>Friendly reminder</strong> - we have not heard back yet.</p>"
         if is_followup else ""
@@ -133,18 +198,10 @@ def send_artwork_email(to_email, client, order_number,
     <html>
     <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
       <h2 style="color:#000;">Your artwork is ready for review</h2>
-      <p>Hi {client},</p>
+      <p>Hello,</p>
       {reminder}
       <p>Your artwork for order <strong>{order_number}</strong>
-         is ready for your approval.</p>
-      <div style="text-align:center;margin:40px 0;">
-        <a href="{art_file_url}"
-           style="background:#000;color:#fff;padding:14px 28px;
-                  text-decoration:none;border-radius:4px;
-                  font-weight:bold;display:inline-block;margin-bottom:20px;">
-          View Artwork
-        </a>
-      </div>
+         is ready for your approval. Please find the artwork file attached.</p>
       <p>Once reviewed please select:</p>
       <div style="text-align:center;margin:30px 0;">
         <a href="{approval_url}?decision=approved"
@@ -171,18 +228,30 @@ def send_artwork_email(to_email, client, order_number,
     </html>
     """
 
+    payload = {
+        "from":    f"High Life Tech <{os.environ['EMAIL_ADDRESS']}>",
+        "to":      [to_email],
+        "subject": f"{prefix}Artwork Approval - {order_number}",
+        "html":    html,
+    }
+
+    # Attach files if present
+    if attachments:
+        payload["attachments"] = [
+            {
+                "filename": a["filename"],
+                "content":  a["content"],  # base64 string
+            }
+            for a in attachments
+        ]
+
     response = requests.post(
         "https://api.resend.com/emails",
         headers={
             "Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
-            "Content-Type": "application/json",
+            "Content-Type":  "application/json",
         },
-        json={
-            "from": f"High Life Tech <{os.environ['EMAIL_ADDRESS']}>",
-            "to": [to_email],
-            "subject": f"{prefix}Artwork Approval - {order_number}",
-            "html": html,
-        },
+        json=payload,
     )
 
     if response.status_code not in (200, 201):
@@ -203,12 +272,13 @@ def artwork_trigger():
     order_number = data.get("order_number", "")
     client       = data.get("client", "")
     client_email = "".join(data.get("client_email", "").split())
-    art_file_url = data.get("art_files", "")
+    art_files_raw = data.get("art_files")
     in_hand_date = data.get("in_hand_date", "")
     assigned_to  = data.get("assigned_to", "")
 
     notify_channel = get_notify_channel(assigned_to)
     print(f"DEBUG email received: repr={repr(client_email)} len={len(client_email)}")
+    print(f"DEBUG art_files raw: {repr(art_files_raw)}")
 
     if not client_email:
         post_to_lark(
@@ -222,14 +292,19 @@ def artwork_trigger():
         table_ids = get_all_table_ids()
         table_id  = table_ids[0] if table_ids else ""
 
-    token = str(uuid.uuid4())
+    # Download art files from Lark
+    attachments = get_lark_file_attachments(art_files_raw)
+    if not attachments:
+        print("DEBUG no attachments retrieved — sending email without attachment")
+
+    token        = str(uuid.uuid4())
     approval_store[token] = {
         "record_id":      record_id,
         "table_id":       table_id,
         "order_number":   order_number,
         "client":         client,
         "client_email":   client_email,
-        "art_file_url":   art_file_url,
+        "art_files_raw":  art_files_raw,
         "in_hand_date":   in_hand_date,
         "assigned_to":    assigned_to,
         "notify_channel": notify_channel,
@@ -240,7 +315,7 @@ def artwork_trigger():
     base_url     = os.environ.get("BOT_URL", "https://your-bot.railway.app")
     approval_url = f"{base_url}/approve/{token}"
 
-    send_artwork_email(client_email, client, order_number, art_file_url, approval_url)
+    send_artwork_email(client_email, order_number, approval_url, attachments)
 
     post_comment(
         table_id, record_id,
@@ -369,12 +444,13 @@ def check_pending_approvals():
                 base_url     = os.environ.get("BOT_URL", "https://your-bot.railway.app")
                 approval_url = f"{base_url}/approve/{token}"
                 try:
+                    # Re-download files for follow-up
+                    attachments = get_lark_file_attachments(project.get("art_files_raw"))
                     send_artwork_email(
                         project["client_email"],
-                        project["client"],
                         project["order_number"],
-                        project["art_file_url"],
                         approval_url,
+                        attachments,
                         is_followup=True,
                     )
                     post_comment(
