@@ -88,6 +88,55 @@ def post_to_lark(channel_id: str, message: str):
     )
 
 
+def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
+                       link_url: str = "", link_text: str = "Open Record"):
+    """Send a rich interactive message card to a Lark chat.
+    color: blue, green, red, orange, grey
+    fields: list of dicts with 'label' and 'value' keys
+    """
+    elements = []
+    # Build field rows (2 columns)
+    for i in range(0, len(fields), 2):
+        cols = []
+        for f in fields[i:i+2]:
+            cols.append({
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "vertical_align": "top",
+                "elements": [{"tag": "markdown", "content": f"**{f['label']}**\n{f['value']}"}]
+            })
+        elements.append({"tag": "column_set", "flex_mode": "bisect", "columns": cols})
+    # Add link button
+    if link_url:
+        elements.append({"tag": "action", "actions": [{
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": link_text},
+            "type": "primary",
+            "url": link_url,
+        }]})
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": title},
+            "template": color,
+        },
+        "elements": elements,
+    }
+    token = get_lark_token()
+    res = requests.post(
+        "https://open.larksuite.com/open-apis/im/v1/messages",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"receive_id_type": "chat_id"},
+        json={
+            "receive_id": channel_id,
+            "msg_type": "interactive",
+            "content": json.dumps(card),
+        },
+    )
+    print(f"DEBUG post_card response: {res.status_code}")
+
+
 def update_record(table_id: str, record_id: str, fields: dict):
     token = get_lark_token()
     res = requests.put(
@@ -102,7 +151,7 @@ def update_record(table_id: str, record_id: str, fields: dict):
 
 def post_comment(table_id: str, record_id: str, text: str):
     token = get_lark_token()
-    requests.post(
+    res = requests.post(
         f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
         f"{os.environ['LARK_BASE_APP_TOKEN']}/tables/"
         f"{table_id}/records/{record_id}/comments",
@@ -124,6 +173,7 @@ def post_comment(table_id: str, record_id: str, text: str):
             }
         },
     )
+    print(f"DEBUG post_comment response: {res.status_code} {res.text[:300]}")
 
 
 # ══════════════════════════════════════════════════════
@@ -396,12 +446,17 @@ def artwork_trigger():
         f"Artwork sent to client - {datetime.now().strftime('%b %d %Y %I:%M %p')}"
     )
 
-    post_to_lark(
+    post_card_to_lark(
         notify_channel,
-        f"Artwork sent to {order_number} | {client} | {product_type}\n"
-        f"In-Hand Date: {in_hand_date}\n"
-        f"Awaiting client approval...\n"
-        f"{link}",
+        title=f"Artwork Sent - {order_number}",
+        color="blue",
+        fields=[
+            {"label": "Client", "value": client or "-"},
+            {"label": "Product Type", "value": product_type or "-"},
+            {"label": "In-Hand Date", "value": in_hand_date or "-"},
+            {"label": "Status", "value": "Awaiting client approval..."},
+        ],
+        link_url=link,
     )
 
     return jsonify({"code": 0})
@@ -460,12 +515,17 @@ def approve(token):
                 f"{project['client']} approved artwork - {now_str}. "
                 f"Production can begin."
             )
-            post_to_lark(
+            post_card_to_lark(
                 notify_channel,
-                f"Approved - {project['order_number']}\n"
-                f"Status -> ARTWORK CONFIRMED\n"
-                f"This order will now begin production.\n"
-                f"{link}",
+                title=f"Approved - {project['order_number']}",
+                color="green",
+                fields=[
+                    {"label": "Client", "value": project.get("client", "-")},
+                    {"label": "Status", "value": "ARTWORK CONFIRMED"},
+                    {"label": "Product Type", "value": project.get("product_type", "-")},
+                    {"label": "Next Step", "value": "Production can begin"},
+                ],
+                link_url=link,
             )
             del approval_store[token]
             return f"""
@@ -484,13 +544,17 @@ def approve(token):
                 f"{project['client']} requested changes - {now_str}. "
                 f"Revision notes: {notes}"
             )
-            post_to_lark(
+            post_card_to_lark(
                 notify_channel,
-                f"{project['client']} requested changes on "
-                f"{project['order_number']}\n"
-                f"Revision notes: {notes}\n"
-                f"Status -> WAITING ART\n"
-                f"{link}",
+                title=f"Changes Requested - {project['order_number']}",
+                color="red",
+                fields=[
+                    {"label": "Client", "value": project.get("client", "-")},
+                    {"label": "Status", "value": "WAITING ART"},
+                    {"label": "Revision Notes", "value": notes or "No notes provided"},
+                    {"label": "Product Type", "value": project.get("product_type", "-")},
+                ],
+                link_url=link,
             )
             del approval_store[token]
             return f"""
