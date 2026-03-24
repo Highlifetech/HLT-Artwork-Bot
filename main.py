@@ -160,7 +160,7 @@ def get_art_files_from_record(table_id: str, record_id: str):
     print(f"DEBUG record fields keys: {list(fields.keys())}")
 
     # Try these field names in order
-    for field_name in ["Art Files", "Production Drawing", "Artwork", "Art File"]:
+    for field_name in ["Production Artwork", "Art Files", "Production Drawing", "Artwork", "Art File"]:
         art_files = fields.get(field_name)
         if art_files:
             print(f"DEBUG found attachments in field '{field_name}': {art_files}")
