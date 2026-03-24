@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import base64
+import io
 import requests
 from flask import Flask, request, jsonify
 from datetime import datetime
@@ -74,13 +75,44 @@ def get_all_table_ids():
     return _table_id_cache
 
 
+def upload_image_to_lark(image_bytes: bytes, filename: str = "artwork.png") -> str:
+    """Upload an image to Lark and return the image_key for use in cards."""
+    token = get_lark_token()
+    try:
+        res = requests.post(
+            "https://open.larksuite.com/open-apis/im/v1/images",
+            headers={"Authorization": f"Bearer {token}"},
+            files={"image": (filename, io.BytesIO(image_bytes), "image/png")},
+            data={"image_type": "message"},
+        )
+        data = res.json()
+        print(f"DEBUG upload_image response: {res.status_code} {data}")
+        if data.get("code") == 0:
+            return data.get("data", {}).get("image_key", "")
+    except Exception as e:
+        print(f"DEBUG upload_image error: {e}")
+    return ""
+
+
 def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
-                      link_url: str = "", link_text: str = "Open Record"):
+                      link_url: str = "", link_text: str = "Open Record",
+                      image_key: str = ""):
     """Send a rich interactive message card to a Lark chat.
     color: blue, green, red, orange, grey
     fields: list of dicts with 'label' and 'value' keys
+    image_key: optional Lark image_key to display artwork preview
     """
     elements = []
+
+    # Show artwork image at top if provided
+    if image_key:
+        elements.append({
+            "tag": "img",
+            "img_key": image_key,
+            "alt": {"tag": "plain_text", "content": "Artwork Preview"},
+        })
+
+    # Build field rows (2 columns)
     for i in range(0, len(fields), 2):
         cols = []
         for f in fields[i:i+2]:
@@ -92,6 +124,8 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
                 "elements": [{"tag": "markdown", "content": f"**{f['label']}**\n{f['value']}"}]
             })
         elements.append({"tag": "column_set", "flex_mode": "bisect", "columns": cols})
+
+    # Add link button
     if link_url:
         elements.append({"tag": "action", "actions": [{
             "tag": "button",
@@ -99,6 +133,7 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
             "type": "primary",
             "url": link_url,
         }]})
+
     card = {
         "config": {"wide_screen_mode": True},
         "header": {
@@ -107,6 +142,7 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
         },
         "elements": elements,
     }
+
     token = get_lark_token()
     res = requests.post(
         "https://open.larksuite.com/open-apis/im/v1/messages",
@@ -133,11 +169,30 @@ def update_record(table_id: str, record_id: str, fields: dict):
     print(f"DEBUG update_record response: {res.status_code} {res.text[:200]}")
 
 
+def get_record_field(table_id: str, record_id: str, field_name: str) -> str:
+    """Get a single field value from a Lark Base record."""
+    token = get_lark_token()
+    res = requests.get(
+        f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
+        f"{os.environ['LARK_BASE_APP_TOKEN']}/tables/{table_id}/records/{record_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    if res.status_code == 200:
+        data = res.json()
+        if data.get("code") == 0:
+            fields = data.get("data", {}).get("record", {}).get("fields", {})
+            return str(fields.get(field_name, ""))
+    return ""
+
+
 # ══════════════════════════════════════════════════════
 # FETCH ART FILES FROM LARK RECORD
 # ══════════════════════════════════════════════════════
 
 def get_art_files_from_record(table_id: str, record_id: str):
+    """Fetches artwork attachments from a Lark Base record.
+    Returns list of dicts with filename, content (base64), and raw_bytes.
+    """
     attachments = []
     token = get_lark_token()
     res = requests.get(
@@ -193,7 +248,11 @@ def get_art_files_from_record(table_id: str, record_id: str):
                 )
             if dl and dl.status_code == 200 and len(dl.content) > 0:
                 encoded = base64.b64encode(dl.content).decode("utf-8")
-                attachments.append({"filename": file_name, "content": encoded})
+                attachments.append({
+                    "filename": file_name,
+                    "content": encoded,
+                    "raw_bytes": dl.content,
+                })
                 print(f"DEBUG downloaded '{file_name}' ({len(dl.content)} bytes)")
             else:
                 status = dl.status_code if dl else 'no response'
@@ -339,6 +398,13 @@ def artwork_trigger():
     attachments = get_art_files_from_record(table_id, record_id)
     print(f"DEBUG attachments count: {len(attachments)}")
 
+    # Upload first artwork image to Lark for card preview
+    image_key = ""
+    if attachments:
+        image_key = upload_image_to_lark(
+            attachments[0]["raw_bytes"], attachments[0]["filename"]
+        )
+
     token = str(uuid.uuid4())
     approval_store[token] = {
         "record_id": record_id,
@@ -352,6 +418,7 @@ def artwork_trigger():
         "notify_channel": notify_channel,
         "sent_at": datetime.now().isoformat(),
         "followup_sent": False,
+        "image_key": image_key,
     }
 
     base_url = os.environ.get("BOT_URL", "https://your-bot.railway.app")
@@ -360,7 +427,6 @@ def artwork_trigger():
 
     send_artwork_email(client_email, order_number, approval_url, attachments)
 
-    # Update status to show artwork was sent
     update_record(table_id, record_id, {
         "Status": "WAITING ART",
         "Last Updated": datetime.now().strftime("%m-%d-%Y"),
@@ -377,6 +443,7 @@ def artwork_trigger():
             {"label": "Status", "value": "Awaiting client approval..."},
         ],
         link_url=link,
+        image_key=image_key,
     )
 
     return jsonify({"code": 0})
@@ -394,6 +461,7 @@ def approve(token):
     project = approval_store[token]
     decision = request.args.get("decision", "")
     notify_channel = project["notify_channel"]
+    image_key = project.get("image_key", "")
 
     if decision == "changes" and request.method == "GET":
         return f"""
@@ -445,6 +513,7 @@ def approve(token):
                     {"label": "Next Step", "value": "Production can begin"},
                 ],
                 link_url=link,
+                image_key=image_key,
             )
             del approval_store[token]
             return f"""
@@ -458,9 +527,15 @@ def approve(token):
 """, 200
 
         else:
+            # Store revision notes in Description field on the record
+            existing_desc = get_record_field(tid, rid, "Description")
+            note_entry = f"[{now_str}] CUSTOMER REVISION NOTES: {notes}"
+            new_desc = f"{existing_desc}\n{note_entry}" if existing_desc else note_entry
+
             update_record(tid, rid, {
                 "Status": "WAITING ART",
                 "Last Updated": datetime.now().strftime("%m-%d-%Y"),
+                "Description": new_desc,
             })
             post_card_to_lark(
                 notify_channel,
@@ -469,10 +544,11 @@ def approve(token):
                 fields=[
                     {"label": "Client", "value": project.get("client", "-")},
                     {"label": "Status", "value": "WAITING ART"},
-                    {"label": "Revision Notes", "value": notes or "No notes provided"},
+                    {"label": "CUSTOMER REVISION NOTES", "value": f"**{notes or 'No notes provided'}**"},
                     {"label": "Product Type", "value": project.get("product_type", "-")},
                 ],
                 link_url=link,
+                image_key=image_key,
             )
             del approval_store[token]
             return f"""
