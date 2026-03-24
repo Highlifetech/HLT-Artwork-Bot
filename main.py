@@ -184,34 +184,37 @@ def get_art_files_from_record(table_id: str, record_id: str):
             continue
 
         try:
-            # Get a fresh temporary download URL from Lark
-            print(f"DEBUG requesting fresh download URL for '{file_name}' token={file_token}")
-            tmp_res = requests.post(
-                "https://open.larksuite.com/open-apis/drive/v1/medias/batch_get_tmp_download_url",
-                headers={"Authorization": f"Bearer {token}"},
-                json={"file_tokens": [file_token]},
-                timeout=15,
-            )
-            print(f"DEBUG batch_get_tmp response: {tmp_res.status_code} {tmp_res.text[:500]}")
-
             dl = None
-            if tmp_res.status_code == 200:
-                tmp_data = tmp_res.json()
-                tmp_urls = tmp_data.get("data", {}).get("tmp_download_urls", [])
-                if tmp_urls:
-                    fresh_url = tmp_urls[0].get("tmp_download_url", "")
-                    if fresh_url:
-                        print(f"DEBUG downloading from fresh tmp_url")
-                        dl = requests.get(fresh_url, timeout=30)
+            auth_hdr = {"Authorization": f"Bearer {token}"}
 
-            # Fall back to Drive media download API
+            # Strategy 1: Use the 'url' field from attachment data (has bitable extra params)
+            att_url = f.get("url", "")
+            if att_url:
+                print(f"DEBUG trying attachment url field for '{file_name}'")
+                dl = requests.get(att_url, headers=auth_hdr, timeout=30)
+                print(f"DEBUG attachment url response: {dl.status_code}")
+
+            # Strategy 2: Use the 'tmp_url' field (pre-signed, may still be valid)
+            if (dl is None or dl.status_code != 200) and f.get("tmp_url"):
+                print(f"DEBUG trying tmp_url for '{file_name}'")
+                dl = requests.get(f["tmp_url"], timeout=30)
+                print(f"DEBUG tmp_url response: {dl.status_code}")
+
+            # Strategy 3: Try tmp_url WITH auth header
+            if (dl is None or dl.status_code != 200) and f.get("tmp_url"):
+                print(f"DEBUG trying tmp_url with auth for '{file_name}'")
+                dl = requests.get(f["tmp_url"], headers=auth_hdr, timeout=30)
+                print(f"DEBUG tmp_url+auth response: {dl.status_code}")
+
+            # Strategy 4: Construct Drive media download URL
             if dl is None or dl.status_code != 200:
                 print(f"DEBUG trying Drive API download for '{file_name}'")
                 dl = requests.get(
                     f"https://open.larksuite.com/open-apis/drive/v1/medias/{file_token}/download",
-                    headers={"Authorization": f"Bearer {token}"},
+                    headers=auth_hdr,
                     timeout=30,
                 )
+                print(f"DEBUG Drive API response: {dl.status_code}")
 
             if dl and dl.status_code == 200 and len(dl.content) > 0:
                 encoded = base64.b64encode(dl.content).decode("utf-8")
