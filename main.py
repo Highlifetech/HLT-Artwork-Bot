@@ -178,18 +178,32 @@ def get_art_files_from_record(table_id: str, record_id: str):
 
         file_token = f.get("file_token") or f.get("token")
         file_name  = f.get("name", "artwork")
+        tmp_url    = f.get("tmp_url") or f.get("url")
 
-        if not file_token:
-            print(f"DEBUG no file_token in: {f}")
+        if not file_token and not tmp_url:
+            print(f"DEBUG no file_token or tmp_url in: {f}")
             continue
 
         try:
-            dl = requests.get(
-                f"https://open.larksuite.com/open-apis/drive/v1/medias/{file_token}/download",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=30,
-            )
-            if dl.status_code == 200:
+            dl = None
+            # Try tmp_url first (direct download from Lark)
+            if tmp_url:
+                print(f"DEBUG trying tmp_url for '{file_name}'")
+                dl = requests.get(tmp_url, timeout=30)
+                if dl.status_code != 200:
+                    print(f"DEBUG tmp_url failed {dl.status_code}, trying Drive API")
+                    dl = None
+
+            # Fall back to Drive API
+            if dl is None and file_token:
+                print(f"DEBUG trying Drive API for '{file_name}'")
+                dl = requests.get(
+                    f"https://open.larksuite.com/open-apis/drive/v1/medias/{file_token}/download",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30,
+                )
+
+            if dl and dl.status_code == 200:
                 encoded = base64.b64encode(dl.content).decode("utf-8")
                 attachments.append({
                     "filename": file_name,
@@ -197,7 +211,8 @@ def get_art_files_from_record(table_id: str, record_id: str):
                 })
                 print(f"DEBUG downloaded '{file_name}' ({len(dl.content)} bytes)")
             else:
-                print(f"DEBUG download failed {dl.status_code}: {dl.text}")
+                status = dl.status_code if dl else 'no response'
+                print(f"DEBUG download failed {status}")
         except Exception as e:
             print(f"DEBUG download exception: {e}")
 
