@@ -81,8 +81,6 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
     fields: list of dicts with 'label' and 'value' keys
     """
     elements = []
-
-    # Build field rows (2 columns)
     for i in range(0, len(fields), 2):
         cols = []
         for f in fields[i:i+2]:
@@ -94,8 +92,6 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
                 "elements": [{"tag": "markdown", "content": f"**{f['label']}**\n{f['value']}"}]
             })
         elements.append({"tag": "column_set", "flex_mode": "bisect", "columns": cols})
-
-    # Add link button
     if link_url:
         elements.append({"tag": "action", "actions": [{
             "tag": "button",
@@ -103,7 +99,6 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
             "type": "primary",
             "url": link_url,
         }]})
-
     card = {
         "config": {"wide_screen_mode": True},
         "header": {
@@ -112,7 +107,6 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
         },
         "elements": elements,
     }
-
     token = get_lark_token()
     res = requests.post(
         "https://open.larksuite.com/open-apis/im/v1/messages",
@@ -139,31 +133,6 @@ def update_record(table_id: str, record_id: str, fields: dict):
     print(f"DEBUG update_record response: {res.status_code} {res.text[:200]}")
 
 
-def post_comment(table_id: str, record_id: str, text: str):
-    """Post a comment to a Lark Base using the Drive comments API."""
-    token = get_lark_token()
-    app_token = os.environ["LARK_BASE_APP_TOKEN"]
-    url = f"https://open.larksuite.com/open-apis/drive/v1/files/{app_token}/comments"
-    res = requests.post(
-        url,
-        headers={"Authorization": f"Bearer {token}"},
-        params={"file_type": "bitable"},
-        json={
-            "reply_list": {
-                "replies": [{
-                    "content": {
-                        "elements": [{
-                            "type": "text_run",
-                            "text_run": {"content": text},
-                        }]
-                    }
-                }]
-            }
-        },
-    )
-    print(f"DEBUG post_comment response: {res.status_code} {res.text[:300]}")
-
-
 # ══════════════════════════════════════════════════════
 # FETCH ART FILES FROM LARK RECORD
 # ══════════════════════════════════════════════════════
@@ -171,21 +140,17 @@ def post_comment(table_id: str, record_id: str, text: str):
 def get_art_files_from_record(table_id: str, record_id: str):
     attachments = []
     token = get_lark_token()
-
     res = requests.get(
         f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
         f"{os.environ['LARK_BASE_APP_TOKEN']}/tables/{table_id}/records/{record_id}",
         headers={"Authorization": f"Bearer {token}"},
     )
     print(f"DEBUG get_record response: {res.status_code}")
-
     if res.status_code != 200:
-        print(f"DEBUG get_record failed: {res.text}")
         return attachments
 
     data = res.json()
     if data.get("code") != 0:
-        print(f"DEBUG get_record Lark error: {data}")
         return attachments
 
     fields = data.get("data", {}).get("record", {}).get("fields", {})
@@ -214,23 +179,18 @@ def get_art_files_from_record(table_id: str, record_id: str):
         try:
             dl = None
             auth_hdr = {"Authorization": f"Bearer {token}"}
-
             att_url = f.get("url", "")
             if att_url:
                 dl = requests.get(att_url, headers=auth_hdr, timeout=30)
-
             if (dl is None or dl.status_code != 200) and f.get("tmp_url"):
                 dl = requests.get(f["tmp_url"], timeout=30)
-
             if (dl is None or dl.status_code != 200) and f.get("tmp_url"):
                 dl = requests.get(f["tmp_url"], headers=auth_hdr, timeout=30)
-
             if dl is None or dl.status_code != 200:
                 dl = requests.get(
                     f"https://open.larksuite.com/open-apis/drive/v1/medias/{file_token}/download",
                     headers=auth_hdr, timeout=30,
                 )
-
             if dl and dl.status_code == 200 and len(dl.content) > 0:
                 encoded = base64.b64encode(dl.content).decode("utf-8")
                 attachments.append({"filename": file_name, "content": encoded})
@@ -240,7 +200,6 @@ def get_art_files_from_record(table_id: str, record_id: str):
                 print(f"DEBUG download failed for '{file_name}': {status}")
         except Exception as e:
             print(f"DEBUG download exception for '{file_name}': {e}")
-
     return attachments
 
 
@@ -328,7 +287,6 @@ Please respond within 24 hours to keep your project on schedule.
             {"filename": a["filename"], "content": a["content"]}
             for a in attachments
         ]
-
     response = requests.post(
         "https://api.resend.com/emails",
         headers={
@@ -402,10 +360,11 @@ def artwork_trigger():
 
     send_artwork_email(client_email, order_number, approval_url, attachments)
 
-    post_comment(
-        table_id, record_id,
-        f"Artwork sent to client - {datetime.now().strftime('%b %d %Y %I:%M %p')}"
-    )
+    # Update status to show artwork was sent
+    update_record(table_id, record_id, {
+        "Status": "WAITING ART",
+        "Last Updated": datetime.now().strftime("%m-%d-%Y"),
+    })
 
     post_card_to_lark(
         notify_channel,
@@ -471,11 +430,10 @@ def approve(token):
         link = record_link(tid, rid)
 
         if final_decision == "approved":
-            update_record(tid, rid, {"Status": "ARTWORK CONFIRMED"})
-            post_comment(tid, rid,
-                f"{project['client']} approved artwork - {now_str}. "
-                f"Production can begin."
-            )
+            update_record(tid, rid, {
+                "Status": "ARTWORK CONFIRMED",
+                "Last Updated": datetime.now().strftime("%m-%d-%Y"),
+            })
             post_card_to_lark(
                 notify_channel,
                 title=f"Approved - {project['order_number']}",
@@ -500,11 +458,10 @@ def approve(token):
 """, 200
 
         else:
-            update_record(tid, rid, {"Status": "WAITING ART"})
-            post_comment(tid, rid,
-                f"{project['client']} requested changes - {now_str}. "
-                f"Revision notes: {notes}"
-            )
+            update_record(tid, rid, {
+                "Status": "WAITING ART",
+                "Last Updated": datetime.now().strftime("%m-%d-%Y"),
+            })
             post_card_to_lark(
                 notify_channel,
                 title=f"Changes Requested - {project['order_number']}",
@@ -556,10 +513,6 @@ def check_pending_approvals():
                         approval_url,
                         attachments,
                         is_followup=True,
-                    )
-                    post_comment(
-                        project["table_id"], project["record_id"],
-                        "Follow-up email sent - no client response after 48hrs"
                     )
                     post_card_to_lark(
                         project["notify_channel"],
