@@ -108,15 +108,16 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
     """
     elements = []
 
-    # Show artwork image at top if provided (cropped, click to expand)
+    # Show artwork image at top if provided (full size, click to expand)
     if image_key:
         elements.append({
             "tag": "img",
             "img_key": image_key,
             "alt": {"tag": "plain_text", "content": "Artwork Preview"},
-            "scale_type": "crop_center",
-            "size": "580px 200px",
+            "mode": "large",
             "preview": True,
+            "custom_width": 600,
+            "compact_width": False,
         })
 
     # Build field rows (2 columns)
@@ -184,9 +185,10 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
             "tag": "img",
             "img_key": image_key,
             "alt": {"tag": "plain_text", "content": "Artwork Preview"},
-            "scale_type": "crop_center",
-            "size": "580px 200px",
+            "mode": "large",
             "preview": True,
+            "custom_width": 600,
+            "compact_width": False,
         })
 
     for i in range(0, len(fields), 2):
@@ -507,9 +509,6 @@ def artwork_trigger():
         "Last Updated": datetime.now().strftime("%m-%d-%Y"),
     })
 
-    # Build request-update button URL
-    req_update_url = f"{base_url}/request-update/{token}"
-
     post_card_to_lark(
         notify_channel,
         title=f"Artwork Sent - {order_number}",
@@ -522,158 +521,9 @@ def artwork_trigger():
         ],
         link_url=link,
         image_key=image_key,
-        extra_buttons=[{
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "Request Update"},
-            "type": "danger",
-            "url": req_update_url,
-        }],
     )
 
     return jsonify({"code": 0})
-
-
-# ══════════════════════════════════════════════════════
-# REQUEST UPDATE (sends persistent card to assigned channel)
-# ══════════════════════════════════════════════════════
-
-@app.route("/request-update/<token>", methods=["GET"])
-def request_update(token):
-    if token not in approval_store:
-        return "<h2>This project is no longer pending.</h2>", 404
-
-    project = approval_store[token]
-    order_number = project["order_number"]
-    assigned_to = project.get("assigned_to", "")
-    image_key = project.get("image_key", "")
-    link = record_link(project["table_id"], project["record_id"])
-
-    # Determine assigned person's channel
-    assigned_channel = get_notify_channel(assigned_to)
-
-    base_url = os.environ.get("BOT_URL", "https://your-bot.railway.app")
-    respond_url = f"{base_url}/update-response/{token}"
-
-    # Send persistent orange card to the assigned channel
-    msg_id = post_card_to_lark(
-        assigned_channel,
-        title=f"Update Requested - {order_number}",
-        color="orange",
-        fields=[
-            {"label": "Client", "value": project.get("client", "-")},
-            {"label": "Product Type", "value": project.get("product_type", "-")},
-            {"label": "In-Hand Date", "value": project.get("in_hand_date", "-")},
-            {"label": "Requested By", "value": "Management"},
-            {"label": "Action Required", "value": "**Please provide a status update on this order**"},
-        ],
-        link_url=link,
-        image_key=image_key,
-        extra_buttons=[{
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "Provide Update"},
-            "type": "primary",
-            "url": respond_url,
-        }],
-    )
-
-    # Store the message_id so we can update the card when they respond
-    update_request_store[token] = {
-        "message_id": msg_id,
-        "channel_id": assigned_channel,
-        "order_number": order_number,
-        "image_key": image_key,
-        "link": link,
-        "project": project,
-    }
-
-    return f"""
-<html>
-<body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
-<h1 style="color:#f97316;">Update Requested!</h1>
-<p>An update request card has been sent to the team channel.<br>
-It will stay there until they respond.</p>
-</body>
-</html>
-""", 200
-
-
-@app.route("/update-response/<token>", methods=["GET", "POST"])
-def update_response(token):
-    if token not in update_request_store:
-        return "<h2>This update request is no longer active.</h2>", 404
-
-    req_data = update_request_store[token]
-
-    if request.method == "GET":
-        return f"""
-<html>
-<body style="font-family:Arial,sans-serif;max-width:500px;
-             margin:60px auto;padding:20px;">
-<h2>Provide Update</h2>
-<p>Please provide a status update for <strong>{req_data['order_number']}</strong>:</p>
-<form method="POST">
- <textarea name="update_text" rows="6"
-   style="width:100%;padding:12px;border:1px solid #ddd;
-   border-radius:4px;font-size:16px;"
-   placeholder="What is the current status of this order?"></textarea>
- <br><br>
- <button type="submit"
-   style="background:#22c55e;color:#fff;padding:12px 24px;
-   border:none;border-radius:4px;font-size:16px;
-   cursor:pointer;">
-   Submit Update
- </button>
-</form>
-</body>
-</html>
-""", 200
-
-    # POST - process the update response
-    update_text = request.form.get("update_text", "No update provided")
-    now_str = datetime.now().strftime("%b %d %Y %I:%M %p")
-    msg_id = req_data.get("message_id", "")
-    project = req_data.get("project", {})
-
-    # Update the orange card to green (resolved)
-    if msg_id:
-        update_card_message(
-            msg_id,
-            title=f"Updated - {req_data['order_number']}",
-            color="green",
-            fields=[
-                {"label": "Client", "value": project.get("client", "-")},
-                {"label": "Status Update", "value": f"**{update_text}**"},
-                {"label": "Updated At", "value": now_str},
-                {"label": "Product Type", "value": project.get("product_type", "-")},
-            ],
-            link_url=req_data.get("link", ""),
-            image_key=req_data.get("image_key", ""),
-        )
-
-    # Also notify the founder channel
-    founder_channel = os.environ["BRENDAN_CHANNEL_ID"]
-    post_card_to_lark(
-        founder_channel,
-        title=f"Update Received - {req_data['order_number']}",
-        color="green",
-        fields=[
-            {"label": "Client", "value": project.get("client", "-")},
-            {"label": "Status Update", "value": f"**{update_text}**"},
-            {"label": "Updated At", "value": now_str},
-        ],
-        link_url=req_data.get("link", ""),
-    )
-
-    del update_request_store[token]
-
-    return f"""
-<html>
-<body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
-<h1 style="color:#22c55e;">Update Submitted!</h1>
-<p>Thank you. Your update has been shared with the team.</p>
-</body>
-</html>
-""", 200
 
 
 # ══════════════════════════════════════════════════════
@@ -689,6 +539,7 @@ def approve(token):
     decision = request.args.get("decision", "")
     notify_channel = project["notify_channel"]
     image_key = project.get("image_key", "")
+    assigned_to = project.get("assigned_to", "")
 
     if decision == "changes" and request.method == "GET":
         return f"""
@@ -724,11 +575,16 @@ def approve(token):
         rid = project["record_id"]
         link = record_link(tid, rid)
 
+        # Determine assigned person's channel for notification
+        assigned_channel = get_notify_channel(assigned_to)
+
         if final_decision == "approved":
             update_record(tid, rid, {
                 "Status": "ARTWORK CONFIRMED",
                 "Last Updated": datetime.now().strftime("%m-%d-%Y"),
             })
+
+            # Notify the founder channel
             post_card_to_lark(
                 notify_channel,
                 title=f"Approved - {project['order_number']}",
@@ -742,6 +598,23 @@ def approve(token):
                 link_url=link,
                 image_key=image_key,
             )
+
+            # Also notify Hannah/assigned person's channel (green = confirmed)
+            if assigned_channel != notify_channel:
+                post_card_to_lark(
+                    assigned_channel,
+                    title=f"Artwork Confirmed - {project['order_number']}",
+                    color="green",
+                    fields=[
+                        {"label": "Client", "value": project.get("client", "-")},
+                        {"label": "Status", "value": "ARTWORK CONFIRMED"},
+                        {"label": "Product Type", "value": project.get("product_type", "-")},
+                        {"label": "Next Step", "value": "Production can begin"},
+                    ],
+                    link_url=link,
+                    image_key=image_key,
+                )
+
             del approval_store[token]
             return f"""
 <html>
@@ -765,6 +638,8 @@ def approve(token):
                 "Last Updated": datetime.now().strftime("%m-%d-%Y"),
                 "Description": new_desc,
             })
+
+            # Notify the founder channel
             post_card_to_lark(
                 notify_channel,
                 title=f"Changes Requested - {project['order_number']}",
@@ -778,6 +653,23 @@ def approve(token):
                 link_url=link,
                 image_key=image_key,
             )
+
+            # Also notify Hannah/assigned person's channel (red = needs revisions)
+            if assigned_channel != notify_channel:
+                post_card_to_lark(
+                    assigned_channel,
+                    title=f"Revisions Needed - {project['order_number']}",
+                    color="red",
+                    fields=[
+                        {"label": "Client", "value": project.get("client", "-")},
+                        {"label": "Status", "value": "WAITING ART"},
+                        {"label": "CUSTOMER REVISION NOTES", "value": f"**{notes or 'No notes provided'}**"},
+                        {"label": "Product Type", "value": project.get("product_type", "-")},
+                    ],
+                    link_url=link,
+                    image_key=image_key,
+                )
+
             del approval_store[token]
             return f"""
 <html>
