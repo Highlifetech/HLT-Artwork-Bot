@@ -25,7 +25,6 @@ TABLE_CACHE_TTL = 300
 # Lark Base deep link
 LARK_BASE_URL = "https://ojpglhhzxlvc.jp.larksuite.com/base/VcAlbwImaab1KlsFLBVjunTNp1c"
 
-
 # ══════════════════════════════════════════════════════
 # CHANNEL ROUTING
 # ══════════════════════════════════════════════════════
@@ -38,10 +37,8 @@ def get_notify_channel(assigned_to: str) -> str:
         return os.environ.get("LUCY_CHANNEL_ID", os.environ["BRENDAN_CHANNEL_ID"])
     return os.environ["BRENDAN_CHANNEL_ID"]
 
-
 def record_link(table_id: str, record_id: str) -> str:
     return f"{LARK_BASE_URL}?table={table_id}&record={record_id}"
-
 
 # ══════════════════════════════════════════════════════
 # LARK HELPERS
@@ -56,7 +53,6 @@ def get_lark_token():
         },
     )
     return res.json()["tenant_access_token"]
-
 
 def get_all_table_ids():
     global _table_id_cache, _table_cache_time
@@ -77,7 +73,6 @@ def get_all_table_ids():
     _table_cache_time = now
     return _table_id_cache
 
-
 def upload_image_to_lark(image_bytes: bytes, filename: str = "artwork.png") -> str:
     """Upload an image to Lark and return the image_key for use in cards."""
     token = get_lark_token()
@@ -95,7 +90,6 @@ def upload_image_to_lark(image_bytes: bytes, filename: str = "artwork.png") -> s
     except Exception as e:
         print(f"DEBUG upload_image error: {e}")
     return ""
-
 
 def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
                       link_url: str = "", link_text: str = "Open Record",
@@ -174,12 +168,10 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
         return data.get("data", {}).get("message_id", "")
     return ""
 
-
 def update_card_message(message_id: str, title: str, color: str, fields: list,
                         link_url: str = "", image_key: str = ""):
     """Update an existing Lark card message (e.g. mark as responded)."""
     elements = []
-
     if image_key:
         elements.append({
             "tag": "img",
@@ -190,7 +182,6 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
             "custom_width": 600,
             "compact_width": False,
         })
-
     for i in range(0, len(fields), 2):
         cols = []
         for f in fields[i:i+2]:
@@ -202,7 +193,6 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
                 "elements": [{"tag": "markdown", "content": f"**{f['label']}**\n{f['value']}"}]
             })
         elements.append({"tag": "column_set", "flex_mode": "bisect", "columns": cols})
-
     if link_url:
         elements.append({"tag": "action", "actions": [{
             "tag": "button",
@@ -210,7 +200,6 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
             "type": "primary",
             "url": link_url,
         }]})
-
     card = {
         "config": {"wide_screen_mode": True},
         "header": {
@@ -219,7 +208,6 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
         },
         "elements": elements,
     }
-
     token = get_lark_token()
     res = requests.patch(
         f"https://open.larksuite.com/open-apis/im/v1/messages/{message_id}",
@@ -227,7 +215,6 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
         json={"msg_type": "interactive", "content": json.dumps(card)},
     )
     print(f"DEBUG update_card response: {res.status_code}")
-
 
 def update_record(table_id: str, record_id: str, fields: dict):
     token = get_lark_token()
@@ -239,7 +226,6 @@ def update_record(table_id: str, record_id: str, fields: dict):
         json={"fields": fields},
     )
     print(f"DEBUG update_record response: {res.status_code} {res.text[:200]}")
-
 
 def get_record_field(table_id: str, record_id: str, field_name: str) -> str:
     """Get a single field value from a Lark Base record."""
@@ -260,17 +246,21 @@ def get_record_field(table_id: str, record_id: str, field_name: str) -> str:
             return val
     return ""
 
-
 # ══════════════════════════════════════════════════════
-# FETCH ART FILES FROM LARK RECORD
+# FETCH ART FILES + RECORD DATA FROM LARK RECORD
 # ══════════════════════════════════════════════════════
 
 def get_art_files_from_record(table_id: str, record_id: str):
-    """Fetches artwork attachments from a Lark Base record.
-    Returns list of dicts with filename, content (base64), and raw_bytes.
+    """Fetches artwork attachments and record fields from a Lark Base record.
+
+    Returns tuple of (attachments, record_fields) where:
+      - attachments: list of dicts with filename, content (base64), and raw_bytes
+      - record_fields: dict of all field values from the record
     """
     attachments = []
+    record_fields = {}
     token = get_lark_token()
+
     res = requests.get(
         f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
         f"{os.environ['LARK_BASE_APP_TOKEN']}/tables/{table_id}/records/{record_id}",
@@ -278,25 +268,23 @@ def get_art_files_from_record(table_id: str, record_id: str):
     )
     print(f"DEBUG get_record response: {res.status_code}")
     if res.status_code != 200:
-        return attachments
-
+        return attachments, record_fields
     data = res.json()
     if data.get("code") != 0:
         print(f"DEBUG get_record error code: {data.get('code')} msg: {data.get('msg')}")
-        return attachments
+        return attachments, record_fields
 
-    fields = data.get("data", {}).get("record", {}).get("fields", {})
-    print(f"DEBUG record fields keys: {list(fields.keys())}")
+    record_fields = data.get("data", {}).get("record", {}).get("fields", {})
+    print(f"DEBUG record fields keys: {list(record_fields.keys())}")
 
-    for field_name in ["Production Artwork", "Art Files", "Production Drawing",
-                       "Artwork", "Art File"]:
-        art_files = fields.get(field_name)
+    for field_name in ["Production Artwork", "Art Files", "Production Drawing", "Artwork", "Art File"]:
+        art_files = record_fields.get(field_name)
         if art_files:
             print(f"DEBUG found attachments in field '{field_name}'")
             break
     else:
         print("DEBUG no art file field found in record")
-        return attachments
+        return attachments, record_fields
 
     if not isinstance(art_files, list):
         art_files = [art_files]
@@ -321,7 +309,8 @@ def get_art_files_from_record(table_id: str, record_id: str):
             if dl is None or dl.status_code != 200:
                 dl = requests.get(
                     f"https://open.larksuite.com/open-apis/drive/v1/medias/{file_token}/download",
-                    headers=auth_hdr, timeout=30,
+                    headers=auth_hdr,
+                    timeout=30,
                 )
             if dl and dl.status_code == 200 and len(dl.content) > 0:
                 encoded = base64.b64encode(dl.content).decode("utf-8")
@@ -336,7 +325,32 @@ def get_art_files_from_record(table_id: str, record_id: str):
                 print(f"DEBUG download failed for '{file_name}': {status}")
         except Exception as e:
             print(f"DEBUG download exception for '{file_name}': {e}")
-    return attachments
+
+    return attachments, record_fields
+
+
+def extract_field_text(value) -> str:
+    """Extract plain text from a Lark Bitable field value.
+    Handles strings, lists of text objects, dicts with 'text' key, etc.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        # Could be a list of text segments like [{"text": "value", "type": "text"}]
+        parts = []
+        for item in value:
+            if isinstance(item, dict):
+                parts.append(item.get("text", item.get("name", str(item))))
+            else:
+                parts.append(str(item))
+        return " ".join(parts).strip()
+    if isinstance(value, dict):
+        return value.get("text", value.get("name", str(value))).strip()
+    return str(value).strip()
 
 
 # ══════════════════════════════════════════════════════
@@ -362,13 +376,11 @@ For any new inquiries, contact your sales rep or email us at
 </p>
 """
 
-
 # ══════════════════════════════════════════════════════
 # EMAIL VIA RESEND
 # ══════════════════════════════════════════════════════
 
-def send_artwork_email(to_email, order_number, approval_url,
-                       attachments=None, is_followup=False):
+def send_artwork_email(to_email, order_number, approval_url, attachments=None, is_followup=False):
     prefix = "Follow-up: " if is_followup else ""
     reminder = (
         "<p><strong>Friendly reminder</strong> - we have not heard back yet.</p>"
@@ -376,41 +388,39 @@ def send_artwork_email(to_email, order_number, approval_url,
     )
     attachment_note = (
         "<p>Please find your artwork file attached to this email.</p>"
-        if attachments else
-        "<p>Please use the buttons below to approve or request changes.</p>"
+        if attachments
+        else "<p>Please use the buttons below to approve or request changes.</p>"
     )
-
     html = f"""
-<html>
-<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-<h2 style="color:#000;">Your artwork is ready for review</h2>
-<p>Hello,</p>
-{reminder}
-<p>Your artwork for order <strong>{order_number}</strong>
-is ready for your approval.</p>
-{attachment_note}
-<p>Once reviewed please select:</p>
-<div style="text-align:center;margin:30px 0;">
- <a href="{approval_url}?decision=approved"
-    style="background:#22c55e;color:#fff;padding:14px 32px;
-    text-decoration:none;border-radius:4px;
-    font-weight:bold;display:inline-block;margin-right:12px;">
-    Approve
- </a>
- <a href="{approval_url}?decision=changes"
-    style="background:#ef4444;color:#fff;padding:14px 32px;
-    text-decoration:none;border-radius:4px;
-    font-weight:bold;display:inline-block;">
-    Request Changes
- </a>
-</div>
-<p style="color:#666;font-size:14px;">
-Please respond within 24 hours to keep your project on schedule.
-</p>
-{EMAIL_FOOTER}
-</body>
-</html>
-"""
+    <html>
+    <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+    <h2 style="color:#000;">Your artwork is ready for review</h2>
+    <p>Hello,</p>
+    {reminder}
+    <p>Your artwork for order <strong>{order_number}</strong> is ready for your approval.</p>
+    {attachment_note}
+    <p>Once reviewed please select:</p>
+    <div style="text-align:center;margin:30px 0;">
+        <a href="{approval_url}?decision=approved"
+           style="background:#22c55e;color:#fff;padding:14px 32px;
+                  text-decoration:none;border-radius:4px;
+                  font-weight:bold;display:inline-block;margin-right:12px;">
+            Approve
+        </a>
+        <a href="{approval_url}?decision=changes"
+           style="background:#ef4444;color:#fff;padding:14px 32px;
+                  text-decoration:none;border-radius:4px;
+                  font-weight:bold;display:inline-block;">
+            Request Changes
+        </a>
+    </div>
+    <p style="color:#666;font-size:14px;">
+        Please respond within 24 hours to keep your project on schedule.
+    </p>
+    {EMAIL_FOOTER}
+    </body>
+    </html>
+    """
 
     payload = {
         "from": f"High Life Tech <{os.environ['EMAIL_ADDRESS']}>",
@@ -423,6 +433,7 @@ Please respond within 24 hours to keep your project on schedule.
             {"filename": a["filename"], "content": a["content"]}
             for a in attachments
         ]
+
     response = requests.post(
         "https://api.resend.com/emails",
         headers={
@@ -434,7 +445,6 @@ Please respond within 24 hours to keep your project on schedule.
     if response.status_code not in (200, 201):
         raise Exception(f"Resend error {response.status_code}: {response.text}")
     return response.json()
-
 
 # ══════════════════════════════════════════════════════
 # ARTWORK TRIGGER
@@ -452,8 +462,38 @@ def artwork_trigger():
     assigned_to = data.get("assigned_to", "")
     product_type = data.get("product_type", "")
 
-    notify_channel = get_notify_channel(assigned_to)
     print(f"DEBUG trigger: email={repr(client_email)} record={repr(record_id)} table={repr(table_id)}")
+
+    if not table_id:
+        table_ids = get_all_table_ids()
+        table_id = table_ids[0] if table_ids else ""
+
+    # Fetch record data + artwork files in one call
+    attachments, rec_fields = get_art_files_from_record(table_id, record_id)
+    print(f"DEBUG attachments count: {len(attachments)}")
+
+    # Auto-fill missing fields from record data
+    if not client:
+        client = extract_field_text(rec_fields.get("Client Name", ""))
+    if not client_email:
+        client_email = "".join(extract_field_text(rec_fields.get("Client Email", "")).split())
+    if not in_hand_date:
+        raw_ihd = rec_fields.get("In-Hand Date")
+        if isinstance(raw_ihd, (int, float)) and raw_ihd > 1000000000:
+            # Lark timestamps are in milliseconds
+            in_hand_date = datetime.fromtimestamp(raw_ihd / 1000).strftime("%m/%d/%Y")
+        else:
+            in_hand_date = extract_field_text(raw_ihd)
+    if not product_type:
+        product_type = extract_field_text(rec_fields.get("Product Type", ""))
+    if not order_number:
+        order_number = extract_field_text(rec_fields.get("Sales Order", ""))
+    if not assigned_to:
+        assigned_to = extract_field_text(rec_fields.get("Assignee", rec_fields.get("Assigned To", "")))
+
+    print(f"DEBUG resolved: client={repr(client)} email={repr(client_email)} ihd={repr(in_hand_date)} pt={repr(product_type)} order={repr(order_number)}")
+
+    notify_channel = get_notify_channel(assigned_to)
 
     if not client_email:
         post_card_to_lark(
@@ -467,13 +507,6 @@ def artwork_trigger():
             ],
         )
         return jsonify({"code": 0})
-
-    if not table_id:
-        table_ids = get_all_table_ids()
-        table_id = table_ids[0] if table_ids else ""
-
-    attachments = get_art_files_from_record(table_id, record_id)
-    print(f"DEBUG attachments count: {len(attachments)}")
 
     # Upload first artwork image to Lark for card preview
     image_key = ""
@@ -509,6 +542,7 @@ def artwork_trigger():
         "Last Updated": datetime.now().strftime("%m-%d-%Y"),
     })
 
+    # Artwork Sent card: compact, NO image (image only shown on approve/revisions)
     post_card_to_lark(
         notify_channel,
         title=f"Artwork Sent - {order_number}",
@@ -523,7 +557,6 @@ def artwork_trigger():
     )
 
     return jsonify({"code": 0})
-
 
 # ══════════════════════════════════════════════════════
 # APPROVAL PAGE
@@ -542,29 +575,28 @@ def approve(token):
 
     if decision == "changes" and request.method == "GET":
         return f"""
-<html>
-<body style="font-family:Arial,sans-serif;max-width:500px;
-             margin:60px auto;padding:20px;">
-<h2>Request Changes</h2>
-<p>Please describe the changes needed for
- <strong>{project['order_number']}</strong>:</p>
-<form method="POST">
- <input type="hidden" name="decision" value="changes">
- <textarea name="notes" rows="6"
-   style="width:100%;padding:12px;border:1px solid #ddd;
-   border-radius:4px;font-size:16px;"
-   placeholder="Describe the changes you need..."></textarea>
- <br><br>
- <button type="submit"
-   style="background:#ef4444;color:#fff;padding:12px 24px;
-   border:none;border-radius:4px;font-size:16px;
-   cursor:pointer;">
-   Submit Changes
- </button>
-</form>
-</body>
-</html>
-""", 200
+        <html>
+        <body style="font-family:Arial,sans-serif;max-width:500px;
+                     margin:60px auto;padding:20px;">
+        <h2>Request Changes</h2>
+        <p>Please describe the changes needed for <strong>{project['order_number']}</strong>:</p>
+        <form method="POST">
+            <input type="hidden" name="decision" value="changes">
+            <textarea name="notes" rows="6"
+                      style="width:100%;padding:12px;border:1px solid #ddd;
+                             border-radius:4px;font-size:16px;"
+                      placeholder="Describe the changes you need..."></textarea>
+            <br><br>
+            <button type="submit"
+                    style="background:#ef4444;color:#fff;padding:12px 24px;
+                           border:none;border-radius:4px;font-size:16px;
+                           cursor:pointer;">
+                Submit Changes
+            </button>
+        </form>
+        </body>
+        </html>
+        """, 200
 
     if decision == "approved" or request.method == "POST":
         notes = request.form.get("notes", "")
@@ -616,14 +648,14 @@ def approve(token):
 
             del approval_store[token]
             return f"""
-<html>
-<body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
-<h1 style="color:#22c55e;">Approved!</h1>
-<p>Thank you &mdash; we will begin production now.</p>
-{PAGE_FOOTER}
-</body>
-</html>
-""", 200
+            <html>
+            <body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
+            <h1 style="color:#22c55e;">Approved!</h1>
+            <p>Thank you &mdash; we will begin production now.</p>
+            {PAGE_FOOTER}
+            </body>
+            </html>
+            """, 200
 
         else:
             # Store revision notes in Description field on the record
@@ -671,18 +703,17 @@ def approve(token):
 
             del approval_store[token]
             return f"""
-<html>
-<body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
-<h1>Got it!</h1>
-<p>We have received your feedback and will send
- a revised proof shortly.</p>
-{PAGE_FOOTER}
-</body>
-</html>
-""", 200
+            <html>
+            <body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
+            <h1>Got it!</h1>
+            <p>We have received your feedback and will send
+            a revised proof shortly.</p>
+            {PAGE_FOOTER}
+            </body>
+            </html>
+            """, 200
 
     return "<h2>Invalid request.</h2>", 400
-
 
 # ══════════════════════════════════════════════════════
 # 48HR FOLLOW-UP
@@ -699,7 +730,7 @@ def check_pending_approvals():
                 base_url = os.environ.get("BOT_URL", "https://your-bot.railway.app")
                 approval_url = f"{base_url}/approve/{token}"
                 try:
-                    attachments = get_art_files_from_record(
+                    attachments, _ = get_art_files_from_record(
                         project["table_id"], project["record_id"]
                     )
                     send_artwork_email(
@@ -725,9 +756,7 @@ def check_pending_approvals():
                 except Exception as e:
                     print(f"Follow-up error: {e}")
 
-
 threading.Thread(target=check_pending_approvals, daemon=True).start()
-
 
 # ══════════════════════════════════════════════════════
 # LARK WEBHOOK
@@ -739,7 +768,6 @@ def webhook():
     if "challenge" in data:
         return jsonify({"challenge": data["challenge"]})
     return jsonify({"code": 0})
-
 
 # ══════════════════════════════════════════════════════
 # RUN
