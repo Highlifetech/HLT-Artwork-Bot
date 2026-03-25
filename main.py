@@ -108,16 +108,15 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
     """
     elements = []
 
-    # Show artwork image at top if provided (large mode, click to expand)
+    # Show artwork image at top if provided (cropped, click to expand)
     if image_key:
         elements.append({
             "tag": "img",
             "img_key": image_key,
             "alt": {"tag": "plain_text", "content": "Artwork Preview"},
-            "mode": "large",
+            "scale_type": "crop_center",
+            "size": "580px 200px",
             "preview": True,
-            "custom_width": 600,
-            "compact_width": False,
         })
 
     # Build field rows (2 columns)
@@ -179,16 +178,17 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
                         link_url: str = "", image_key: str = ""):
     """Update an existing Lark card message (e.g. mark as responded)."""
     elements = []
+
     if image_key:
         elements.append({
             "tag": "img",
             "img_key": image_key,
             "alt": {"tag": "plain_text", "content": "Artwork Preview"},
-            "mode": "large",
+            "scale_type": "crop_center",
+            "size": "580px 200px",
             "preview": True,
-            "custom_width": 600,
-            "compact_width": False,
         })
+
     for i in range(0, len(fields), 2):
         cols = []
         for f in fields[i:i+2]:
@@ -200,6 +200,7 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
                 "elements": [{"tag": "markdown", "content": f"**{f['label']}**\n{f['value']}"}]
             })
         elements.append({"tag": "column_set", "flex_mode": "bisect", "columns": cols})
+
     if link_url:
         elements.append({"tag": "action", "actions": [{
             "tag": "button",
@@ -216,6 +217,7 @@ def update_card_message(message_id: str, title: str, color: str, fields: list,
         },
         "elements": elements,
     }
+
     token = get_lark_token()
     res = requests.patch(
         f"https://open.larksuite.com/open-apis/im/v1/messages/{message_id}",
@@ -245,11 +247,15 @@ def get_record_field(table_id: str, record_id: str, field_name: str) -> str:
         f"{os.environ['LARK_BASE_APP_TOKEN']}/tables/{table_id}/records/{record_id}",
         headers={"Authorization": f"Bearer {token}"},
     )
+    print(f"DEBUG get_record_field response: {res.status_code}")
     if res.status_code == 200:
         data = res.json()
+        print(f"DEBUG get_record_field code: {data.get('code')}")
         if data.get("code") == 0:
             fields = data.get("data", {}).get("record", {}).get("fields", {})
-            return str(fields.get(field_name, ""))
+            val = str(fields.get(field_name, ""))
+            print(f"DEBUG get_record_field '{field_name}' = '{val[:100]}'")
+            return val
     return ""
 
 
@@ -271,11 +277,15 @@ def get_art_files_from_record(table_id: str, record_id: str):
     print(f"DEBUG get_record response: {res.status_code}")
     if res.status_code != 200:
         return attachments
+
     data = res.json()
     if data.get("code") != 0:
+        print(f"DEBUG get_record error code: {data.get('code')} msg: {data.get('msg')}")
         return attachments
 
     fields = data.get("data", {}).get("record", {}).get("fields", {})
+    print(f"DEBUG record fields keys: {list(fields.keys())}")
+
     for field_name in ["Production Artwork", "Art Files", "Production Drawing",
                        "Artwork", "Art File"]:
         art_files = fields.get(field_name)
@@ -367,6 +377,7 @@ def send_artwork_email(to_email, order_number, approval_url,
         if attachments else
         "<p>Please use the buttons below to approve or request changes.</p>"
     )
+
     html = f"""
 <html>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
@@ -378,18 +389,18 @@ is ready for your approval.</p>
 {attachment_note}
 <p>Once reviewed please select:</p>
 <div style="text-align:center;margin:30px 0;">
-  <a href="{approval_url}?decision=approved"
-     style="background:#22c55e;color:#fff;padding:14px 32px;
-            text-decoration:none;border-radius:4px;
-            font-weight:bold;display:inline-block;margin-right:12px;">
+ <a href="{approval_url}?decision=approved"
+    style="background:#22c55e;color:#fff;padding:14px 32px;
+    text-decoration:none;border-radius:4px;
+    font-weight:bold;display:inline-block;margin-right:12px;">
     Approve
-  </a>
-  <a href="{approval_url}?decision=changes"
-     style="background:#ef4444;color:#fff;padding:14px 32px;
-            text-decoration:none;border-radius:4px;
-            font-weight:bold;display:inline-block;">
+ </a>
+ <a href="{approval_url}?decision=changes"
+    style="background:#ef4444;color:#fff;padding:14px 32px;
+    text-decoration:none;border-radius:4px;
+    font-weight:bold;display:inline-block;">
     Request Changes
-  </a>
+ </a>
 </div>
 <p style="color:#666;font-size:14px;">
 Please respond within 24 hours to keep your project on schedule.
@@ -398,6 +409,7 @@ Please respond within 24 hours to keep your project on schedule.
 </body>
 </html>
 """
+
     payload = {
         "from": f"High Life Tech <{os.environ['EMAIL_ADDRESS']}>",
         "to": [to_email],
@@ -600,17 +612,17 @@ def update_response(token):
 <h2>Provide Update</h2>
 <p>Please provide a status update for <strong>{req_data['order_number']}</strong>:</p>
 <form method="POST">
-  <textarea name="update_text" rows="6"
-    style="width:100%;padding:12px;border:1px solid #ddd;
-           border-radius:4px;font-size:16px;"
-    placeholder="What is the current status of this order?"></textarea>
-  <br><br>
-  <button type="submit"
-    style="background:#22c55e;color:#fff;padding:12px 24px;
-           border:none;border-radius:4px;font-size:16px;
-           cursor:pointer;">
-    Submit Update
-  </button>
+ <textarea name="update_text" rows="6"
+   style="width:100%;padding:12px;border:1px solid #ddd;
+   border-radius:4px;font-size:16px;"
+   placeholder="What is the current status of this order?"></textarea>
+ <br><br>
+ <button type="submit"
+   style="background:#22c55e;color:#fff;padding:12px 24px;
+   border:none;border-radius:4px;font-size:16px;
+   cursor:pointer;">
+   Submit Update
+ </button>
 </form>
 </body>
 </html>
@@ -685,20 +697,20 @@ def approve(token):
              margin:60px auto;padding:20px;">
 <h2>Request Changes</h2>
 <p>Please describe the changes needed for
-   <strong>{project['order_number']}</strong>:</p>
+ <strong>{project['order_number']}</strong>:</p>
 <form method="POST">
-  <input type="hidden" name="decision" value="changes">
-  <textarea name="notes" rows="6"
-    style="width:100%;padding:12px;border:1px solid #ddd;
-           border-radius:4px;font-size:16px;"
-    placeholder="Describe the changes you need..."></textarea>
-  <br><br>
-  <button type="submit"
-    style="background:#ef4444;color:#fff;padding:12px 24px;
-           border:none;border-radius:4px;font-size:16px;
-           cursor:pointer;">
-    Submit Changes
-  </button>
+ <input type="hidden" name="decision" value="changes">
+ <textarea name="notes" rows="6"
+   style="width:100%;padding:12px;border:1px solid #ddd;
+   border-radius:4px;font-size:16px;"
+   placeholder="Describe the changes you need..."></textarea>
+ <br><br>
+ <button type="submit"
+   style="background:#ef4444;color:#fff;padding:12px 24px;
+   border:none;border-radius:4px;font-size:16px;
+   cursor:pointer;">
+   Submit Changes
+ </button>
 </form>
 </body>
 </html>
@@ -742,9 +754,11 @@ def approve(token):
 """, 200
 
         else:
+            # Store revision notes in Description field on the record
             existing_desc = get_record_field(tid, rid, "Description")
             note_entry = f"[{now_str}] CUSTOMER REVISION NOTES: {notes}"
             new_desc = f"{existing_desc}\n{note_entry}" if existing_desc else note_entry
+            print(f"DEBUG saving Description: {repr(new_desc[:200])}")
 
             update_record(tid, rid, {
                 "Status": "WAITING ART",
@@ -770,7 +784,7 @@ def approve(token):
 <body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
 <h1>Got it!</h1>
 <p>We have received your feedback and will send
-   a revised proof shortly.</p>
+ a revised proof shortly.</p>
 {PAGE_FOOTER}
 </body>
 </html>
