@@ -698,7 +698,7 @@ def approve(token):
             print(f"DEBUG saving Description: {repr(new_desc[:200])}")
 
             update_record(tid, rid, {
-                "Status": "NEEDS REVISION",
+                "Status": "PENDING ARTWORK",
                 "Last Updated": datetime.now().strftime("%m-%d-%Y"),
                 "Artwork Revision Notes": new_desc,
             })
@@ -710,7 +710,7 @@ def approve(token):
                 color="red",
                 fields=[
                     {"label": "Client", "value": project.get("client", "-")},
-                    {"label": "Status", "value": "NEEDS REVISION"},
+                    {"label": "Status", "value": "PENDING ARTWORK"},
                     {"label": "CUSTOMER REVISION NOTES", "value": f"**{notes or 'No notes provided'}**"},
                     {"label": "Product Type", "value": project.get("product_type", "-")},
                 ],
@@ -726,7 +726,7 @@ def approve(token):
                     color="red",
                     fields=[
                         {"label": "Client", "value": project.get("client", "-")},
-                        {"label": "Status", "value": "NEEDS REVISION"},
+                        {"label": "Status", "value": "PENDING ARTWORK"},
                         {"label": "CUSTOMER REVISION NOTES", "value": f"**{notes or 'No notes provided'}**"},
                         {"label": "Product Type", "value": project.get("product_type", "-")},
                     ],
