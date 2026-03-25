@@ -14,6 +14,9 @@ app = Flask(__name__)
 # In-memory approval store
 approval_store = {}
 
+# Update request store: tracks pending update requests to Hannah/Lucy
+update_request_store = {}
+
 # Table ID cache
 _table_id_cache = []
 _table_cache_time = 0
@@ -86,7 +89,7 @@ def upload_image_to_lark(image_bytes: bytes, filename: str = "artwork.png") -> s
             data={"image_type": "message"},
         )
         data = res.json()
-        print(f"DEBUG upload_image response: {res.status_code} {data}")
+        print(f"DEBUG upload_image response: {res.status_code} code={data.get('code')}")
         if data.get("code") == 0:
             return data.get("data", {}).get("image_key", "")
     except Exception as e:
@@ -96,20 +99,25 @@ def upload_image_to_lark(image_bytes: bytes, filename: str = "artwork.png") -> s
 
 def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
                       link_url: str = "", link_text: str = "Open Record",
-                      image_key: str = ""):
+                      image_key: str = "", extra_buttons: list = None):
     """Send a rich interactive message card to a Lark chat.
     color: blue, green, red, orange, grey
     fields: list of dicts with 'label' and 'value' keys
     image_key: optional Lark image_key to display artwork preview
+    extra_buttons: optional list of extra button dicts to add alongside Open Record
     """
     elements = []
 
-    # Show artwork image at top if provided
+    # Show artwork image at top if provided (large mode, click to expand)
     if image_key:
         elements.append({
             "tag": "img",
             "img_key": image_key,
             "alt": {"tag": "plain_text", "content": "Artwork Preview"},
+            "mode": "large",
+            "preview": True,
+            "custom_width": 600,
+            "compact_width": False,
         })
 
     # Build field rows (2 columns)
@@ -125,14 +133,19 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
             })
         elements.append({"tag": "column_set", "flex_mode": "bisect", "columns": cols})
 
-    # Add link button
+    # Add buttons row
+    buttons = []
     if link_url:
-        elements.append({"tag": "action", "actions": [{
+        buttons.append({
             "tag": "button",
             "text": {"tag": "plain_text", "content": link_text},
             "type": "primary",
             "url": link_url,
-        }]})
+        })
+    if extra_buttons:
+        buttons.extend(extra_buttons)
+    if buttons:
+        elements.append({"tag": "action", "actions": buttons})
 
     card = {
         "config": {"wide_screen_mode": True},
@@ -155,6 +168,61 @@ def post_card_to_lark(channel_id: str, title: str, color: str, fields: list,
         },
     )
     print(f"DEBUG post_card response: {res.status_code}")
+    # Return the message_id so we can update the card later
+    if res.status_code == 200:
+        data = res.json()
+        return data.get("data", {}).get("message_id", "")
+    return ""
+
+
+def update_card_message(message_id: str, title: str, color: str, fields: list,
+                        link_url: str = "", image_key: str = ""):
+    """Update an existing Lark card message (e.g. mark as responded)."""
+    elements = []
+    if image_key:
+        elements.append({
+            "tag": "img",
+            "img_key": image_key,
+            "alt": {"tag": "plain_text", "content": "Artwork Preview"},
+            "mode": "large",
+            "preview": True,
+            "custom_width": 600,
+            "compact_width": False,
+        })
+    for i in range(0, len(fields), 2):
+        cols = []
+        for f in fields[i:i+2]:
+            cols.append({
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "vertical_align": "top",
+                "elements": [{"tag": "markdown", "content": f"**{f['label']}**\n{f['value']}"}]
+            })
+        elements.append({"tag": "column_set", "flex_mode": "bisect", "columns": cols})
+    if link_url:
+        elements.append({"tag": "action", "actions": [{
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "Open Record"},
+            "type": "primary",
+            "url": link_url,
+        }]})
+
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": title},
+            "template": color,
+        },
+        "elements": elements,
+    }
+    token = get_lark_token()
+    res = requests.patch(
+        f"https://open.larksuite.com/open-apis/im/v1/messages/{message_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"msg_type": "interactive", "content": json.dumps(card)},
+    )
+    print(f"DEBUG update_card response: {res.status_code}")
 
 
 def update_record(table_id: str, record_id: str, fields: dict):
@@ -203,14 +271,11 @@ def get_art_files_from_record(table_id: str, record_id: str):
     print(f"DEBUG get_record response: {res.status_code}")
     if res.status_code != 200:
         return attachments
-
     data = res.json()
     if data.get("code") != 0:
         return attachments
 
     fields = data.get("data", {}).get("record", {}).get("fields", {})
-    print(f"DEBUG record fields keys: {list(fields.keys())}")
-
     for field_name in ["Production Artwork", "Art Files", "Production Drawing",
                        "Artwork", "Art File"]:
         art_files = fields.get(field_name)
@@ -302,7 +367,6 @@ def send_artwork_email(to_email, order_number, approval_url,
         if attachments else
         "<p>Please use the buttons below to approve or request changes.</p>"
     )
-
     html = f"""
 <html>
 <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
@@ -334,7 +398,6 @@ Please respond within 24 hours to keep your project on schedule.
 </body>
 </html>
 """
-
     payload = {
         "from": f"High Life Tech <{os.environ['EMAIL_ADDRESS']}>",
         "to": [to_email],
@@ -432,6 +495,9 @@ def artwork_trigger():
         "Last Updated": datetime.now().strftime("%m-%d-%Y"),
     })
 
+    # Build request-update button URL
+    req_update_url = f"{base_url}/request-update/{token}"
+
     post_card_to_lark(
         notify_channel,
         title=f"Artwork Sent - {order_number}",
@@ -444,9 +510,158 @@ def artwork_trigger():
         ],
         link_url=link,
         image_key=image_key,
+        extra_buttons=[{
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "Request Update"},
+            "type": "danger",
+            "url": req_update_url,
+        }],
     )
 
     return jsonify({"code": 0})
+
+
+# ══════════════════════════════════════════════════════
+# REQUEST UPDATE (sends persistent card to assigned channel)
+# ══════════════════════════════════════════════════════
+
+@app.route("/request-update/<token>", methods=["GET"])
+def request_update(token):
+    if token not in approval_store:
+        return "<h2>This project is no longer pending.</h2>", 404
+
+    project = approval_store[token]
+    order_number = project["order_number"]
+    assigned_to = project.get("assigned_to", "")
+    image_key = project.get("image_key", "")
+    link = record_link(project["table_id"], project["record_id"])
+
+    # Determine assigned person's channel
+    assigned_channel = get_notify_channel(assigned_to)
+
+    base_url = os.environ.get("BOT_URL", "https://your-bot.railway.app")
+    respond_url = f"{base_url}/update-response/{token}"
+
+    # Send persistent orange card to the assigned channel
+    msg_id = post_card_to_lark(
+        assigned_channel,
+        title=f"Update Requested - {order_number}",
+        color="orange",
+        fields=[
+            {"label": "Client", "value": project.get("client", "-")},
+            {"label": "Product Type", "value": project.get("product_type", "-")},
+            {"label": "In-Hand Date", "value": project.get("in_hand_date", "-")},
+            {"label": "Requested By", "value": "Management"},
+            {"label": "Action Required", "value": "**Please provide a status update on this order**"},
+        ],
+        link_url=link,
+        image_key=image_key,
+        extra_buttons=[{
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "Provide Update"},
+            "type": "primary",
+            "url": respond_url,
+        }],
+    )
+
+    # Store the message_id so we can update the card when they respond
+    update_request_store[token] = {
+        "message_id": msg_id,
+        "channel_id": assigned_channel,
+        "order_number": order_number,
+        "image_key": image_key,
+        "link": link,
+        "project": project,
+    }
+
+    return f"""
+<html>
+<body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
+<h1 style="color:#f97316;">Update Requested!</h1>
+<p>An update request card has been sent to the team channel.<br>
+It will stay there until they respond.</p>
+</body>
+</html>
+""", 200
+
+
+@app.route("/update-response/<token>", methods=["GET", "POST"])
+def update_response(token):
+    if token not in update_request_store:
+        return "<h2>This update request is no longer active.</h2>", 404
+
+    req_data = update_request_store[token]
+
+    if request.method == "GET":
+        return f"""
+<html>
+<body style="font-family:Arial,sans-serif;max-width:500px;
+             margin:60px auto;padding:20px;">
+<h2>Provide Update</h2>
+<p>Please provide a status update for <strong>{req_data['order_number']}</strong>:</p>
+<form method="POST">
+  <textarea name="update_text" rows="6"
+    style="width:100%;padding:12px;border:1px solid #ddd;
+           border-radius:4px;font-size:16px;"
+    placeholder="What is the current status of this order?"></textarea>
+  <br><br>
+  <button type="submit"
+    style="background:#22c55e;color:#fff;padding:12px 24px;
+           border:none;border-radius:4px;font-size:16px;
+           cursor:pointer;">
+    Submit Update
+  </button>
+</form>
+</body>
+</html>
+""", 200
+
+    # POST - process the update response
+    update_text = request.form.get("update_text", "No update provided")
+    now_str = datetime.now().strftime("%b %d %Y %I:%M %p")
+    msg_id = req_data.get("message_id", "")
+    project = req_data.get("project", {})
+
+    # Update the orange card to green (resolved)
+    if msg_id:
+        update_card_message(
+            msg_id,
+            title=f"Updated - {req_data['order_number']}",
+            color="green",
+            fields=[
+                {"label": "Client", "value": project.get("client", "-")},
+                {"label": "Status Update", "value": f"**{update_text}**"},
+                {"label": "Updated At", "value": now_str},
+                {"label": "Product Type", "value": project.get("product_type", "-")},
+            ],
+            link_url=req_data.get("link", ""),
+            image_key=req_data.get("image_key", ""),
+        )
+
+    # Also notify the founder channel
+    founder_channel = os.environ["BRENDAN_CHANNEL_ID"]
+    post_card_to_lark(
+        founder_channel,
+        title=f"Update Received - {req_data['order_number']}",
+        color="green",
+        fields=[
+            {"label": "Client", "value": project.get("client", "-")},
+            {"label": "Status Update", "value": f"**{update_text}**"},
+            {"label": "Updated At", "value": now_str},
+        ],
+        link_url=req_data.get("link", ""),
+    )
+
+    del update_request_store[token]
+
+    return f"""
+<html>
+<body style="font-family:Arial,sans-serif;text-align:center;padding:80px 20px;">
+<h1 style="color:#22c55e;">Update Submitted!</h1>
+<p>Thank you. Your update has been shared with the team.</p>
+</body>
+</html>
+""", 200
 
 
 # ══════════════════════════════════════════════════════
@@ -527,7 +742,6 @@ def approve(token):
 """, 200
 
         else:
-            # Store revision notes in Description field on the record
             existing_desc = get_record_field(tid, rid, "Description")
             note_entry = f"[{now_str}] CUSTOMER REVISION NOTES: {notes}"
             new_desc = f"{existing_desc}\n{note_entry}" if existing_desc else note_entry
