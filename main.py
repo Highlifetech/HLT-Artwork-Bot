@@ -659,7 +659,7 @@ def approve(token):
 
         else:
             # Store revision notes in Description field on the record
-            existing_desc = get_record_field(tid, rid, "Description")
+            existing_desc = get_record_field(tid, rid, "Artwork Revision Notes")
             note_entry = f"[{now_str}] CUSTOMER REVISION NOTES: {notes}"
             new_desc = f"{existing_desc}\n{note_entry}" if existing_desc else note_entry
             print(f"DEBUG saving Description: {repr(new_desc[:200])}")
@@ -667,7 +667,7 @@ def approve(token):
             update_record(tid, rid, {
                 "Status": "WAITING ART",
                 "Last Updated": datetime.now().strftime("%m-%d-%Y"),
-                "Description": new_desc,
+                "Artwork Revision Notes": new_desc,
             })
 
             # Notify the founder channel
