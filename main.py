@@ -241,7 +241,8 @@ def get_record_field(table_id: str, record_id: str, field_name: str) -> str:
         print(f"DEBUG get_record_field code: {data.get('code')}")
         if data.get("code") == 0:
             fields = data.get("data", {}).get("record", {}).get("fields", {})
-            val = str(fields.get(field_name, ""))
+            raw_val = fields.get(field_name)
+            val = str(raw_val) if raw_val is not None else ""
             print(f"DEBUG get_record_field '{field_name}' = '{val[:100]}'")
             return val
     return ""
@@ -602,7 +603,7 @@ def approve(token):
     if decision == "approved" or request.method == "POST":
         notes = request.form.get("notes", "")
         final_decision = request.form.get("decision", decision)
-        now_str = datetime.now().strftime("%b %d %Y %I:%M %p")
+        now_str = datetime.now().strftime("%B %d, %Y")
         tid = project["table_id"]
         rid = project["record_id"]
         link = record_link(tid, rid)
@@ -661,7 +662,11 @@ def approve(token):
         else:
             # Store revision notes in Description field on the record
             existing_desc = get_record_field(tid, rid, "Artwork Revision Notes")
-            note_entry = f"[{now_str}] CUSTOMER REVISION NOTES: {notes}"
+            if existing_desc.strip().lower() == "none":
+                existing_desc = ""
+            else:
+                existing_desc = existing_desc.strip()
+            note_entry = f"{now_str} Customer Revision: {notes}"
             new_desc = f"{existing_desc}\n{note_entry}" if existing_desc else note_entry
             print(f"DEBUG saving Description: {repr(new_desc[:200])}")
 
