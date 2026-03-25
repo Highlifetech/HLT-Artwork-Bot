@@ -539,7 +539,6 @@ def artwork_trigger():
     send_artwork_email(client_email, order_number, approval_url, attachments)
 
     update_record(table_id, record_id, {
-        "Status": "WAITING ART",
         "Last Updated": datetime.now().strftime("%m-%d-%Y"),
     })
 
