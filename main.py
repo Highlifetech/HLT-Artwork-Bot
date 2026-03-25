@@ -520,7 +520,6 @@ def artwork_trigger():
             {"label": "Status", "value": "Awaiting client approval..."},
         ],
         link_url=link,
-        image_key=image_key,
     )
 
     return jsonify({"code": 0})
