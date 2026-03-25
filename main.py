@@ -29,12 +29,40 @@ LARK_BASE_URL = "https://ojpglhhzxlvc.jp.larksuite.com/base/VcAlbwImaab1KlsFLBVj
 # CHANNEL ROUTING
 # ══════════════════════════════════════════════════════
 
-def get_notify_channel(assigned_to: str) -> str:
-    assigned = (assigned_to or "").strip().lower()
-    if "hannah" in assigned:
-        return os.environ.get("HANNAH_CHANNEL_ID", os.environ["BRENDAN_CHANNEL_ID"])
-    if "lucy" in assigned:
+# Table name cache: table_id -> table_name
+_table_name_cache = {}
+
+def get_table_name(table_id: str) -> str:
+    """Look up the table name for a given table_id."""
+    if table_id in _table_name_cache:
+        return _table_name_cache[table_id]
+    token = get_lark_token()
+    res = requests.get(
+        f"https://open.larksuite.com/open-apis/bitable/v1/apps/"
+        f"{os.environ['LARK_BASE_APP_TOKEN']}/tables",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"page_size": 100},
+    )
+    data = res.json()
+    if data.get("code") == 0:
+        for t in data.get("data", {}).get("items", []):
+            _table_name_cache[t["table_id"]] = t.get("name", "")
+    name = _table_name_cache.get(table_id, "")
+    print(f"DEBUG get_table_name: {table_id} -> {repr(name)}")
+    return name
+
+def get_artist_channel(table_id: str) -> str:
+    """Route to Hannah or Lucy channel based on the table name.
+    - Tables with 'lucy' in name -> Lucy
+    - Everything else (hannah tables, large client folders, brendan, etc.) -> Hannah
+    """
+    name = get_table_name(table_id).lower()
+    if "lucy" in name:
         return os.environ.get("LUCY_CHANNEL_ID", os.environ["BRENDAN_CHANNEL_ID"])
+    return os.environ.get("HANNAH_CHANNEL_ID", os.environ["BRENDAN_CHANNEL_ID"])
+
+def get_notify_channel() -> str:
+    """The founder channel where blue Artwork Sent cards go."""
     return os.environ["BRENDAN_CHANNEL_ID"]
 
 def record_link(table_id: str, record_id: str) -> str:
@@ -494,7 +522,7 @@ def artwork_trigger():
 
     print(f"DEBUG resolved: client={repr(client)} email={repr(client_email)} ihd={repr(in_hand_date)} pt={repr(product_type)} order={repr(order_number)}")
 
-    notify_channel = get_notify_channel(assigned_to)
+    notify_channel = get_notify_channel()
 
     if not client_email:
         post_card_to_lark(
@@ -608,7 +636,7 @@ def approve(token):
         link = record_link(tid, rid)
 
         # Determine assigned person's channel for notification
-        assigned_channel = get_notify_channel(assigned_to)
+        assigned_channel = get_artist_channel(tid)
 
         if final_decision == "approved":
             update_record(tid, rid, {
