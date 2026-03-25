@@ -542,7 +542,7 @@ def artwork_trigger():
         "Last Updated": datetime.now().strftime("%m-%d-%Y"),
     })
 
-    # Artwork Sent card: compact, NO image (image only shown on approve/revisions)
+    # Artwork Sent card with image preview (image only shown on approve/revisions)
     post_card_to_lark(
         notify_channel,
         title=f"Artwork Sent - {order_number}",
@@ -554,6 +554,7 @@ def artwork_trigger():
             {"label": "Status", "value": "Awaiting client approval..."},
         ],
         link_url=link,
+                image_key=image_key,
     )
 
     return jsonify({"code": 0})
