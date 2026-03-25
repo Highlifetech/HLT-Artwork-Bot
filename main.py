@@ -409,7 +409,7 @@ For any new inquiries, contact your sales rep or email us at
 # EMAIL VIA RESEND
 # ══════════════════════════════════════════════════════
 
-def send_artwork_email(to_email, order_number, approval_url, attachments=None, is_followup=False):
+def send_artwork_email(to_email, order_number, approval_url, client_name="", attachments=None, is_followup=False):
     prefix = "Follow-up: " if is_followup else ""
     reminder = (
         "<p><strong>Friendly reminder</strong> - we have not heard back yet.</p>"
@@ -424,7 +424,7 @@ def send_artwork_email(to_email, order_number, approval_url, attachments=None, i
     <html>
     <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
     <h2 style="color:#000;">Your artwork is ready for review</h2>
-    <p>Hello,</p>
+    <p>Hello{" " + client_name if client_name else ""},</p>
     {reminder}
     <p>Your artwork for order <strong>{order_number}</strong> is ready for your approval.</p>
     {attachment_note}
@@ -564,7 +564,7 @@ def artwork_trigger():
     approval_url = f"{base_url}/approve/{token}"
     link = record_link(table_id, record_id)
 
-    send_artwork_email(client_email, order_number, approval_url, attachments)
+    send_artwork_email(client_email, order_number, approval_url, client_name=client, attachments=attachments)
 
     update_record(table_id, record_id, {
         "Last Updated": datetime.now().strftime("%m-%d-%Y"),
@@ -770,7 +770,8 @@ def check_pending_approvals():
                         project["client_email"],
                         project["order_number"],
                         approval_url,
-                        attachments,
+                        client_name=project.get("client", ""),
+                        attachments=attachments,
                         is_followup=True,
                     )
                     post_card_to_lark(
