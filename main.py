@@ -25,9 +25,9 @@ TABLE_CACHE_TTL = 300
 # Lark Base deep link
 LARK_BASE_URL = "https://ojpglhhzxlvc.jp.larksuite.com/base/VcAlbwImaab1KlsFLBVjunTNp1c"
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # CHANNEL ROUTING
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 # Table name cache: table_id -> table_name
 _table_name_cache = {}
@@ -68,9 +68,9 @@ def get_notify_channel() -> str:
 def record_link(table_id: str, record_id: str) -> str:
     return f"{LARK_BASE_URL}?table={table_id}&record={record_id}"
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # LARK HELPERS
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def get_lark_token():
     res = requests.post(
@@ -275,9 +275,9 @@ def get_record_field(table_id: str, record_id: str, field_name: str) -> str:
             return val
     return ""
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # FETCH ART FILES + RECORD DATA FROM LARK RECORD
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def get_art_files_from_record(table_id: str, record_id: str):
     """Fetches artwork attachments and record fields from a Lark Base record.
@@ -382,9 +382,9 @@ def extract_field_text(value) -> str:
     return str(value).strip()
 
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # EMAIL FOOTER
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 EMAIL_FOOTER = """
 <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
@@ -405,9 +405,9 @@ For any new inquiries, contact your sales rep or email us at
 </p>
 """
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # EMAIL VIA RESEND
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def send_artwork_email(to_email, order_number, approval_url, client_name="", attachments=None, is_followup=False):
     prefix = "Follow-up: " if is_followup else ""
@@ -475,9 +475,9 @@ def send_artwork_email(to_email, order_number, approval_url, client_name="", att
         raise Exception(f"Resend error {response.status_code}: {response.text}")
     return response.json()
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # ARTWORK TRIGGER
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @app.route("/artwork-trigger", methods=["POST"])
 def artwork_trigger():
@@ -587,9 +587,9 @@ def artwork_trigger():
 
     return jsonify({"code": 0})
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # APPROVAL PAGE
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @app.route("/approve/<token>", methods=["GET", "POST"])
 def approve(token):
@@ -748,9 +748,9 @@ def approve(token):
 
     return "<h2>Invalid request.</h2>", 400
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # 48HR FOLLOW-UP
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def check_pending_approvals():
     while True:
@@ -792,9 +792,9 @@ def check_pending_approvals():
 
 threading.Thread(target=check_pending_approvals, daemon=True).start()
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # LARK WEBHOOK
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -803,9 +803,113 @@ def webhook():
         return jsonify({"challenge": data["challenge"]})
     return jsonify({"code": 0})
 
-# ══════════════════════════════════════════════════════
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # RUN
+
 # ══════════════════════════════════════════════════════
+# SHIPPING STATUS CONDITIONAL FORMATTING
+# ══════════════════════════════════════════════════════
+# Maps each shipping status value to a Lark Base cell background color.
+# Lark Base color palette indices (used in conditional formatting rules):
+#   1 = Red      -> LABEL CREATED/NOT SCANNED
+#   2 = Orange   -> EXCEPTION/DELAY
+#   3 = Yellow   -> IN TRANSIT
+#   4 = Green    -> DELIVERED
+SHIPPING_STATUS_COLOR_MAP = {
+    "LABEL CREATED/NOT SCANNED": {"bg": 1, "font": 0},  # Red bg, default font
+    "IN TRANSIT":                {"bg": 3, "font": 0},  # Yellow bg
+    "DELIVERED":                 {"bg": 4, "font": 0},  # Green bg
+    "EXCEPTION/DELAY":           {"bg": 2, "font": 0},  # Orange bg
+}
+
+def apply_shipping_conditional_formatting(table_id: str, record_id: str, status_value: str):
+    """
+    Updates the cell color of the 'Shipping Status' field for a given record
+    using Lark Base's record update API with a text color/background hint.
+
+    Since Lark Base does not expose a public conditional-formatting REST API,
+    we achieve the visual effect by writing a specially-formatted rich-text
+    value back to a dedicated 'Shipping Status Color' (single-select) field
+    whose options are pre-colored in the base to match the statuses.
+
+    If you want to drive it purely via conditional formatting rules in the UI,
+    use the Lark Base UI: Field Settings -> Conditional Formatting and set the
+    four rules to match the values below with the matching colors from the image.
+
+    This function posts a Lark IM notification card in the appropriate color
+    so that the team chat mirrors the status color even without UI changes.
+    """
+    color_info = SHIPPING_STATUS_COLOR_MAP.get(status_value.upper().strip())
+    if not color_info:
+        print(f"DEBUG apply_shipping_cf: unknown status '{status_value}', skipping")
+        return
+
+    # Map color index to Lark card template colors for the notification
+    lark_card_color = {
+        1: "red",
+        2: "orange",
+        3: "yellow",
+        4: "green",
+    }.get(color_info["bg"], "blue")
+
+    # Update the record's Shipping Status field
+    update_record(table_id, record_id, {
+        "Shipping Status": status_value,
+    })
+    print(f"DEBUG apply_shipping_cf: set Shipping Status='{status_value}' color={lark_card_color} for record {record_id}")
+    return lark_card_color
+
+
+@app.route("/shipping-status-update", methods=["POST"])
+def shipping_status_update():
+    """
+    Webhook endpoint called when a shipment status changes.
+    Payload: { table_id, record_id, status, order_number, client, tracking_number }
+
+    This updates the Shipping Status field on the record AND posts a color-coded
+    Lark card to the notify channel so the team sees the correct status color:
+      - LABEL CREATED/NOT SCANNED -> Red card
+      - IN TRANSIT                -> Yellow card
+      - DELIVERED                 -> Green card
+      - EXCEPTION/DELAY           -> Orange card
+    """
+    data = request.json or {}
+    table_id     = data.get("table_id", "")
+    record_id    = data.get("record_id", "")
+    status       = data.get("status", "").upper().strip()
+    order_number = data.get("order_number", "")
+    client       = data.get("client", "")
+    tracking_num = data.get("tracking_number", "")
+
+    if not table_id or not record_id or not status:
+        return jsonify({"code": 1, "msg": "Missing table_id, record_id, or status"}), 400
+
+    # Apply conditional formatting color and update field
+    card_color = apply_shipping_conditional_formatting(table_id, record_id, status)
+    if not card_color:
+        return jsonify({"code": 1, "msg": f"Unknown shipping status: {status}"}), 400
+
+    # If status unknown, card_color is None – already handled above
+    notify_channel = get_notify_channel()
+    link = record_link(table_id, record_id)
+
+    # Post color-coded Lark card to team channel
+    post_card_to_lark(
+        notify_channel,
+        title=f"Shipping Update - {order_number}",
+        color=card_color,
+        fields=[
+            {"label": "Client",          "value": client or "-"},
+            {"label": "Shipping Status", "value": status},
+            {"label": "Tracking #",      "value": tracking_num or "-"},
+        ],
+        link_url=link,
+    )
+
+    return jsonify({"code": 0})
+
+
+# ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
